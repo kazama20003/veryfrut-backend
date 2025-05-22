@@ -1,0 +1,108 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Product {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  price       Float
+  stock       Int
+  imageUrl    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  categoryId  Int
+
+  category     Category                 @relation(fields: [categoryId], references: [id])
+  productUnits ProductUnitMeasurement[] // Relación muchos a muchos
+  orderItems   OrderItem[]
+}
+
+model Category {
+  id       Int       @id @default(autoincrement())
+  name     String    @unique
+  products Product[]
+}
+
+model UnitMeasurement {
+  id           Int                      @id @default(autoincrement())
+  name         String                   @unique // Ej: "Kg", "Unidades", "L"
+  description  String? // Ej: "Kilogramos", "Unidades", "Litros"
+  productUnits ProductUnitMeasurement[] // Relación muchos a muchos
+  OrderItem    OrderItem[]
+}
+
+model ProductUnitMeasurement {
+  id                Int @id @default(autoincrement())
+  productId         Int
+  unitMeasurementId Int
+
+  product         Product         @relation(fields: [productId], references: [id])
+  unitMeasurement UnitMeasurement @relation(fields: [unitMeasurementId], references: [id])
+
+  @@unique([productId, unitMeasurementId]) // Evitar duplicados
+}
+
+model Company {
+  id    Int    @id @default(autoincrement())
+  name  String @unique
+  areas Area[] // Un área pertenece a una empresa, una empresa tiene varias áreas
+}
+
+model Area {
+  id        Int    @id @default(autoincrement())
+  name      String
+  companyId Int
+
+  company Company @relation(fields: [companyId], references: [id]) // Relación con la empresa
+  users   User[] // Un área puede tener varios usuarios (de diferentes áreas dentro de la misma empresa)
+  orders  Order[] // Un área puede tener varias órdenes
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  firstName String
+  lastName  String
+  email     String   @unique // El mismo correo puede ser usado por diferentes usuarios (áreas)
+  phone     String?
+  address   String?
+  password  String
+  role      String // admin o customer
+  areas     Area[] // Un usuario puede estar asociado a varias áreas de la misma empresa
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orders Order[] // Un usuario puede tener varias órdenes
+}
+
+model Order {
+  id          Int      @id @default(autoincrement())
+  areaId      Int
+  totalAmount Float
+  status      String // Ej: "created", "delivered", etc.
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  area       Area        @relation(fields: [areaId], references: [id]) // La orden pertenece a un área
+  orderItems OrderItem[] // Un pedido puede tener varios productos
+  User       User?       @relation(fields: [userId], references: [id])
+  userId     Int?
+}
+
+model OrderItem {
+  id                Int   @id @default(autoincrement())
+  orderId           Int
+  productId         Int
+  quantity          Int
+  price             Float
+  unitMeasurementId Int
+
+  order           Order           @relation(fields: [orderId], references: [id])
+  product         Product         @relation(fields: [productId], references: [id])
+  unitMeasurement UnitMeasurement @relation(fields: [unitMeasurementId], references: [id])
+}
