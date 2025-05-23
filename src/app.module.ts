@@ -11,6 +11,7 @@ import { AuthModule } from './auth/auth.module';
 import { AreasModule } from './areas/areas.module';
 import { CompanyModule } from './company/company.module';
 import { UploadsModule } from './uploads/uploads.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { UploadsModule } from './uploads/uploads.module';
     AreasModule,
     CompanyModule,
     UploadsModule,
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [AppService],
