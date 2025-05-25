@@ -23,12 +23,11 @@ async function bootstrap() {
 
   // Habilitar CORS solo para el dominio frontend
   app.enableCors({
-    origin: ['https://veryfrut.com'], // Dominio de tu frontend permitido
+    origin: ['https://veryfrut.com', 'https://www.veryfrut.com'],
+
     credentials: true, // Permitir cookies / headers con credenciales
   });
-
-  // Arrancar el servidor en el puerto configurado
-  await app.listen(envs.port);
+  await app.listen(envs.port, '0.0.0.0');
 
   logger.log(`Back End running at http://localhost:${envs.port}`);
 }
