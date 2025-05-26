@@ -7,6 +7,7 @@ export class AuthController {
 
   @Post('login')
   async login(@Body() loginDto: LoginDto) {
+    console.log('Petición recibida:', loginDto); // AÑADE ESTO
     return this.authService.login(loginDto);
   }
 }
