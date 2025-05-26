@@ -1,22 +1,18 @@
 import { Controller, Post, Body, Logger } from '@nestjs/common';
-import { AuthService } from './auth.service';
+import { AuthService } from './auth.service'; // importa el servicio
 import { LoginDto } from './dto/login.dto';
 
 @Controller('auth')
 export class AuthController {
   private readonly logger = new Logger(AuthController.name);
 
-  constructor(private readonly authService: AuthService) {}
+  constructor(private readonly authService: AuthService) {} // inyecta el servicio
 
   @Post('login')
   async login(@Body() loginDto: LoginDto) {
     this.logger.log('➡️ Login llamado');
     this.logger.debug(JSON.stringify(loginDto));
-    return this.authService.login(loginDto);
-  }
-  @Post('register')
-  register(@Body() body: LoginDto) {
-    this.logger.log('➡️ Register' + body.email);
-    return { message: 'Registro exitoso' };
+    const result = await this.authService.login(loginDto); // usa authService
+    return result;
   }
 }
