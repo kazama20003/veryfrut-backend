@@ -21,12 +21,10 @@ async function bootstrap() {
     }),
   );
 
-  // Habilitar CORS solo para el dominio frontend
   app.enableCors({
-    origin: ['https://veryfrut.com'],
-    credentials: true,
+    origin: '*', // Solo para pruebas
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-    allowedHeaders: 'Origin, Content-Type, Accept, Authorization',
+    allowedHeaders: '*',
   });
 
   await app.listen(envs.port, '0.0.0.0');
