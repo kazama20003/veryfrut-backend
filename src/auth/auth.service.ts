@@ -43,14 +43,12 @@ export class AuthService {
       return { access_token };
     } catch (err: unknown) {
       if (err instanceof Error) {
-        console.error('Error al iniciar sesión:', err.message);
-        // Aquí aseguramos que solo tratamos con el mensaje de error
+        console.error('Error al iniciar sesión:', err.message, err.stack);
       } else {
         console.error('Error desconocido:', err);
       }
-
-      // Lanzamos una excepción si el error es conocido
-      throw new UnauthorizedException('Error al intentar iniciar sesión');
+      // Rethrow the original error so Nest can handle it properly
+      throw err;
     }
   }
 }
