@@ -22,9 +22,9 @@ async function bootstrap() {
   );
 
   app.enableCors({
-    origin: '*', // Solo para pruebas
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-    allowedHeaders: '*',
+    origin: 'https://www.veryfrut.com',
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    credentials: true, // Solo si usas cookies o autenticación basada en sesiones
   });
 
   await app.listen(envs.port, '0.0.0.0');
