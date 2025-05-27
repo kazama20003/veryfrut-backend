@@ -23,7 +23,7 @@ async function bootstrap() {
 
   app.enableCors();
 
-  await app.listen(envs.port);
+  await app.listen(envs.port, '0.0.0.0');
 
   logger.log(`Back End running at http://localhost:${envs.port}`);
 }
