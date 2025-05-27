@@ -6,14 +6,9 @@ import { ValidationPipe } from '@nestjs/common';
 
 async function bootstrap() {
   const logger = new Logger('Main');
-
-  // Crear la aplicación NestJS
   const app = await NestFactory.create(AppModule);
 
-  // Prefijo global para las rutas
   app.setGlobalPrefix('api');
-
-  // Validación global de datos entrantes
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -21,13 +16,21 @@ async function bootstrap() {
     }),
   );
 
-  app.enableCors();
+  // Forzar sólo IPv4 (opcional, pero recomendado en este entorno)
+  const host = '127.0.0.1';
+  const port = envs.port;
 
-  // … (configuraciones previas)
+  // <-- Habilitamos CORS aquí, con el origen de tu frontend
+  app.enableCors({
+    origin: ['https://veryfrut.com', 'https://www.veryfrut.com'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true, // Si manejas cookies / credenciales
+    preflightContinue: false, // Dejar que NestJS responda el OPTIONS internamente
+    optionsSuccessStatus: 204, // Status para respuestas OPTIONS
+  });
 
-  // Forzamos solo IPv4 en localhost
-  await app.listen(envs.port, '127.0.0.1');
-
-  logger.log(`Back End running at http://127.0.0.1:${envs.port}`);
+  await app.listen(port, host);
+  logger.log(`Back End running at http://${host}:${port}`);
 }
 bootstrap();
