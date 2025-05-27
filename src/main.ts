@@ -23,8 +23,11 @@ async function bootstrap() {
 
   app.enableCors();
 
+  // … (configuraciones previas)
+
+  // Forzamos solo IPv4 en localhost
   await app.listen(envs.port, '127.0.0.1');
 
-  logger.log(`Back End running at http://localhost:${envs.port}`);
+  logger.log(`Back End running at http://127.0.0.1:${envs.port}`);
 }
 bootstrap();
