@@ -10,8 +10,6 @@ export class AuthController {
 
   @Post('login')
   async login(@Body() loginDto: LoginDto) {
-    this.logger.log('➡️ Login llamado');
-    this.logger.debug(JSON.stringify(loginDto));
     const result = await this.authService.login(loginDto); // usa authService
     return result;
   }

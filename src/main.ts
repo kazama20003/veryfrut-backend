@@ -21,13 +21,9 @@ async function bootstrap() {
     }),
   );
 
-  // app.enableCors({
-  //   origin: 'https://www.veryfrut.com',
-  //   methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-  //   credentials: true, // Solo si usas cookies o autenticación basada en sesiones
-  // });
+  app.enableCors();
 
-  await app.listen(4000, '0.0.0.0');
+  await app.listen(envs.port);
 
   logger.log(`Back End running at http://localhost:${envs.port}`);
 }
