@@ -98,7 +98,7 @@ model OrderItem {
   id                Int   @id @default(autoincrement())
   orderId           Int
   productId         Int
-  quantity          Int
+  quantity          Float
   price             Float
   unitMeasurementId Int
 
