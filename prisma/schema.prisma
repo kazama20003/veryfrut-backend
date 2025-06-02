@@ -85,6 +85,7 @@ model Order {
   areaId      Int
   totalAmount Float
   status      String // Ej: "created", "delivered", etc.
+  observation String? // <- Campo agregado
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

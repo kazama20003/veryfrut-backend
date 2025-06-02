@@ -15,7 +15,8 @@ export class OrdersService {
 
   // Crear una nueva orden
   async create(createOrderDto: CreateOrderDto): Promise<Order> {
-    const { userId, areaId, totalAmount, status, orderItems } = createOrderDto;
+    const { userId, areaId, totalAmount, status, observation, orderItems } =
+      createOrderDto;
 
     const order = await this.prisma.order.create({
       data: {
@@ -23,12 +24,13 @@ export class OrdersService {
         areaId,
         totalAmount,
         status,
+        observation, // ✅ Se incluye correctamente
         orderItems: {
           create: orderItems.map((item) => ({
             productId: item.productId,
             quantity: item.quantity,
             price: item.price,
-            unitMeasurementId: item.unitMeasurementId, // ✅ se agrega este campo
+            unitMeasurementId: item.unitMeasurementId,
           })),
         },
       },
@@ -36,7 +38,7 @@ export class OrdersService {
         orderItems: {
           include: {
             product: true,
-            unitMeasurement: true, // ✅ para que venga completa la info del ítem
+            unitMeasurement: true,
           },
         },
         User: true,
@@ -48,21 +50,48 @@ export class OrdersService {
   }
 
   // Obtener todas las órdenes
-  async findAll(): Promise<Order[]> {
-    return this.prisma.order.findMany({
-      include: {
-        orderItems: {
-          include: {
-            product: true, // Incluye los detalles del producto
+  // Obtener todas las órdenes con paginación
+  async findAll(
+    page = 1,
+    limit = 10,
+  ): Promise<{
+    data: Order[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }> {
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.order.findMany({
+        skip,
+        take: limit,
+        include: {
+          orderItems: {
+            include: {
+              product: true,
+            },
           },
+          User: true,
+          area: true,
         },
-        User: true,
-        area: true, // Incluye detalles del área si es necesario
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+        orderBy: {
+          createdAt: 'desc',
+        },
+      }),
+      this.prisma.order.count(),
+    ]);
+
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages,
+    };
   }
 
   async findOne(id: number): Promise<Order> {
@@ -94,7 +123,7 @@ export class OrdersService {
   // src/orders/orders.service.ts
 
   async update(id: number, updateOrderDto: UpdateOrderDto): Promise<Order> {
-    const { totalAmount, status, orderItems } = updateOrderDto;
+    const { totalAmount, status, observation, orderItems } = updateOrderDto;
 
     // Verificar si la orden existe antes de actualizar
     const existingOrder = await this.prisma.order.findUnique({
@@ -125,6 +154,7 @@ export class OrdersService {
       data: {
         totalAmount,
         status,
+        observation, // ✅ Se agrega para actualizar el campo
         orderItems: orderItems
           ? {
               deleteMany: {}, // Eliminar items existentes
@@ -132,7 +162,7 @@ export class OrdersService {
                 productId: item.productId,
                 quantity: item.quantity,
                 price: item.price,
-                unitMeasurementId: item.unitMeasurementId, // ✅ se agrega este campo
+                unitMeasurementId: item.unitMeasurementId,
               })),
             }
           : undefined,
@@ -141,7 +171,7 @@ export class OrdersService {
         orderItems: {
           include: {
             product: true,
-            unitMeasurement: true, // ✅ incluir relación para mostrar en la respuesta
+            unitMeasurement: true,
           },
         },
         User: true,

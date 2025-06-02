@@ -2,7 +2,9 @@ import {
   IsArray,
   IsEnum,
   IsNumber,
+  IsOptional,
   IsPositive,
+  IsString,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -27,7 +29,7 @@ class CreateOrderItemDto {
 
   @IsNumber()
   @IsPositive()
-  unitMeasurementId: number; // ✅ Nuevo campo obligatorio
+  unitMeasurementId: number;
 }
 
 export class CreateOrderDto {
@@ -46,6 +48,10 @@ export class CreateOrderDto {
     message: 'Status must be one of: created, process, delivered',
   })
   status: OrderStatus;
+
+  @IsOptional()
+  @IsString()
+  observation?: string; // ← Campo agregado
 
   @IsArray()
   @ValidateNested({ each: true })

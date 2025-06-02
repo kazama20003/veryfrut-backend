@@ -22,8 +22,8 @@ export class OrdersController {
   }
 
   @Get()
-  findAll() {
-    return this.ordersService.findAll();
+  findAll(@Query('page') page = '1', @Query('limit') limit = '10') {
+    return this.ordersService.findAll(Number(page), Number(limit));
   }
 
   @Get('check')
