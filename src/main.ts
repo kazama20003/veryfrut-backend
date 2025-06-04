@@ -22,11 +22,7 @@ async function bootstrap() {
 
   // <-- Habilitamos CORS aquí, con el origen de tu frontend
   app.enableCors({
-    origin: [
-      'https://veryfrut.com',
-      'https://www.veryfrut.com',
-      'http://localhost:3000',
-    ],
+    origin: ['https://veryfrut.com', 'https://www.veryfrut.com'],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true, // Si manejas cookies / credenciales
