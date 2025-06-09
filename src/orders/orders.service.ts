@@ -8,6 +8,7 @@ import { UpdateOrderDto } from './dto/update-order.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CheckOrderDto } from './dto/check-order.dto';
 import { Order } from '@prisma/client';
+import { toZonedTime } from 'date-fns-tz'; // Cambiado a la importación correcta
 
 @Injectable()
 export class OrdersService {
@@ -134,18 +135,23 @@ export class OrdersService {
       throw new NotFoundException(`Orden con ID ${id} no encontrada`);
     }
 
-    const createdAt = new Date(existingOrder.createdAt);
-    const now = new Date();
+    // Zona horaria de Perú (America/Lima)
+    const peruTimeZone = 'America/Lima';
 
-    const startOfDay = new Date(createdAt);
-    startOfDay.setUTCHours(0, 0, 0, 0);
+    // Convertir fechas a la zona horaria de Perú
+    const createdAtPeru = toZonedTime(existingOrder.createdAt, peruTimeZone);
+    const nowPeru = toZonedTime(new Date(), peruTimeZone);
+
+    // Obtener inicio y fin del día en horario de Perú
+    const startOfDay = new Date(createdAtPeru);
+    startOfDay.setHours(0, 0, 0, 0);
 
     const endOfDay = new Date(startOfDay);
-    endOfDay.setUTCDate(startOfDay.getUTCDate() + 1);
+    endOfDay.setDate(startOfDay.getDate() + 1);
 
-    if (now < startOfDay || now >= endOfDay) {
+    if (nowPeru < startOfDay || nowPeru >= endOfDay) {
       throw new BadRequestException(
-        'La orden solo puede ser modificada durante el mismo día en que fue creada.',
+        'La orden solo puede ser modificada durante el mismo día en que fue creada (horario de Perú).',
       );
     }
 
@@ -154,10 +160,10 @@ export class OrdersService {
       data: {
         totalAmount,
         status,
-        observation, // ✅ Se agrega para actualizar el campo
+        observation,
         orderItems: orderItems
           ? {
-              deleteMany: {}, // Eliminar items existentes
+              deleteMany: {},
               create: orderItems.map((item) => ({
                 productId: item.productId,
                 quantity: item.quantity,
@@ -179,7 +185,6 @@ export class OrdersService {
       },
     });
   }
-
   // Eliminar una orden
   async remove(id: number): Promise<Order> {
     const order = await this.prisma.order.findUnique({ where: { id } });
@@ -226,7 +231,6 @@ export class OrdersService {
   async checkExistingOrder(query: CheckOrderDto) {
     const { areaId, date } = query;
 
-    // Verificación inicial de los parámetros
     if (!areaId) {
       throw new BadRequestException('El parámetro "areaId" es obligatorio.');
     }
@@ -234,7 +238,6 @@ export class OrdersService {
       throw new BadRequestException('El parámetro "date" es obligatorio.');
     }
 
-    // Conversión y validación de "areaId"
     const areaIdNumber = Number(areaId);
     if (isNaN(areaIdNumber)) {
       throw new BadRequestException(
@@ -242,7 +245,6 @@ export class OrdersService {
       );
     }
 
-    // Validación de fecha en formato ISO8601
     const formattedDate = new Date(date);
     if (isNaN(formattedDate.getTime())) {
       throw new BadRequestException(
@@ -250,17 +252,21 @@ export class OrdersService {
       );
     }
 
-    // Definir el rango de 24 horas
-    const startOfDay = new Date(formattedDate.setUTCHours(0, 0, 0, 0));
+    // Horario de Perú
+    const peruTimeZone = 'America/Lima';
+    const zonedDate = toZonedTime(formattedDate, peruTimeZone);
+
+    const startOfDay = new Date(zonedDate);
+    startOfDay.setHours(0, 0, 0, 0);
+
     const endOfDay = new Date(startOfDay);
-    endOfDay.setUTCDate(startOfDay.getUTCDate() + 1);
+    endOfDay.setDate(endOfDay.getDate() + 1);
 
     console.log('Rango de búsqueda:', {
       startOfDay: startOfDay.toISOString(),
       endOfDay: endOfDay.toISOString(),
     });
 
-    // Búsqueda de la orden en el rango de 24 horas
     const exists = await this.prisma.order.findFirst({
       where: {
         areaId: areaIdNumber,
@@ -273,16 +279,15 @@ export class OrdersService {
 
     return { exists: exists !== null };
   }
+
   // Filtrar órdenes por rango de fechas
   async filterByDate(startDate: string, endDate: string): Promise<Order[]> {
-    // Verificar si las fechas están presentes
     if (!startDate || !endDate) {
       throw new BadRequestException(
         'Los parámetros "startDate" y "endDate" son obligatorios.',
       );
     }
 
-    // Validar formato de fechas ISO8601
     const start = new Date(startDate);
     const end = new Date(endDate);
 
@@ -292,7 +297,6 @@ export class OrdersService {
       );
     }
 
-    // Asegurarse de que la fecha de inicio sea anterior a la fecha de fin
     if (start > end) {
       throw new BadRequestException(
         'La fecha de inicio debe ser anterior a la fecha de fin.',
@@ -304,7 +308,6 @@ export class OrdersService {
       endDate: end.toISOString(),
     });
 
-    // Búsqueda de órdenes en el rango de fechas
     const orders = await this.prisma.order.findMany({
       where: {
         createdAt: {
@@ -316,7 +319,7 @@ export class OrdersService {
         orderItems: {
           include: {
             product: true,
-            unitMeasurement: true, // ✅ Aquí se incluye la unidad de medida
+            unitMeasurement: true,
           },
         },
         User: true,
