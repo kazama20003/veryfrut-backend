@@ -57,11 +57,12 @@ model Company {
 model Area {
   id        Int    @id @default(autoincrement())
   name      String
+  color     String @default("#CCCCCC")
   companyId Int
 
-  company Company @relation(fields: [companyId], references: [id]) // Relación con la empresa
-  users   User[] // Un área puede tener varios usuarios (de diferentes áreas dentro de la misma empresa)
-  orders  Order[] // Un área puede tener varias órdenes
+  company Company @relation(fields: [companyId], references: [id])
+  users   User[]
+  orders  Order[]
 }
 
 model User {

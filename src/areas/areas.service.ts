@@ -12,9 +12,17 @@ import { Area } from '@prisma/client';
 export class AreasService {
   constructor(private prisma: PrismaService) {}
 
-  // Método para crear una nueva área
+  private generateRandomColor(): string {
+    return (
+      '#' +
+      Math.floor(Math.random() * 16777215)
+        .toString(16)
+        .padStart(6, '0')
+    );
+  }
+
   async create(createAreaDto: CreateAreaDto): Promise<Area> {
-    const { name, companyId } = createAreaDto;
+    const { name, companyId, color } = createAreaDto;
 
     const existingArea = await this.prisma.area.findFirst({
       where: {
@@ -32,6 +40,7 @@ export class AreasService {
     return this.prisma.area.create({
       data: {
         name,
+        color: color || this.generateRandomColor(), // usa el color enviado o genera uno
         company: {
           connect: {
             id: companyId,
@@ -68,7 +77,7 @@ export class AreasService {
   }
 
   async update(id: number, updateAreaDto: UpdateAreaDto): Promise<Area> {
-    const { name, companyId } = updateAreaDto;
+    const { name, companyId, color } = updateAreaDto;
 
     const existingArea = await this.prisma.area.findUnique({
       where: { id },
@@ -82,6 +91,7 @@ export class AreasService {
       where: { id },
       data: {
         name,
+        color,
         company: {
           connect: {
             id: companyId,

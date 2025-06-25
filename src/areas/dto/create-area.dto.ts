@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsInt } from 'class-validator';
+import { IsString, IsNotEmpty, IsInt, IsOptional } from 'class-validator';
 
 export class CreateAreaDto {
   @IsString()
@@ -8,4 +8,8 @@ export class CreateAreaDto {
   @IsInt()
   @IsNotEmpty()
   companyId: number;
+
+  @IsString()
+  @IsOptional()
+  color?: string; // Campo opcional para el color
 }
