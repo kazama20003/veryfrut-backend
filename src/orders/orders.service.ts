@@ -8,7 +8,7 @@ import { UpdateOrderDto } from './dto/update-order.dto';
 import { CheckOrderDto } from './dto/check-order.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Order } from '@prisma/client';
-import { toZonedTime } from 'date-fns-tz';
+import { utcToZonedTime, zonedTimeToUtc } from 'date-fns-tz';
 
 @Injectable()
 export class OrdersService {
@@ -110,8 +110,9 @@ export class OrdersService {
     }
 
     const peruTZ = 'America/Lima';
-    const createdAtPeru = toZonedTime(existingOrder.createdAt, peruTZ);
-    const nowPeru = toZonedTime(new Date(), peruTZ);
+
+    const createdAtPeru = utcToZonedTime(existingOrder.createdAt, peruTZ);
+    const nowPeru = utcToZonedTime(new Date(), peruTZ);
 
     const startOfDay = new Date(createdAtPeru);
     startOfDay.setHours(0, 0, 0, 0);
@@ -203,27 +204,23 @@ export class OrdersService {
     const parsedDate = new Date(date);
     if (isNaN(parsedDate.getTime())) {
       throw new BadRequestException(
-        'Fecha inválida. Debe ser formato ISO8601.',
+        'Fecha inválida. Debe estar en formato ISO8601.',
       );
     }
 
-    const peruTZ = 'America/Lima';
-    const zoned = toZonedTime(parsedDate, peruTZ);
+    const tz = 'America/Lima';
 
-    const startOfDay = new Date(zoned);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(startOfDay);
-    endOfDay.setDate(startOfDay.getDate() + 1);
+    const start = zonedTimeToUtc(new Date(`${date}T00:00:00`), tz);
+    const end = zonedTimeToUtc(new Date(`${date}T23:59:59.999`), tz);
 
-    const startUtc = new Date(startOfDay.toISOString());
-    const endUtc = new Date(endOfDay.toISOString());
+    console.log({ startUtc: start.toISOString(), endUtc: end.toISOString() });
 
     const exists = await this.prisma.order.findFirst({
       where: {
         areaId: areaIdNum,
         createdAt: {
-          gte: startUtc,
-          lt: endUtc,
+          gte: start,
+          lte: end,
         },
       },
     });
@@ -255,9 +252,10 @@ export class OrdersService {
 
     const tz = 'America/Lima';
 
-    const startZoned = toZonedTime(start, tz);
+    const startZoned = utcToZonedTime(start, tz);
     startZoned.setHours(0, 0, 0, 0);
-    const endZoned = toZonedTime(end, tz);
+
+    const endZoned = utcToZonedTime(end, tz);
     endZoned.setHours(23, 59, 59, 999);
 
     const startUtc = new Date(startZoned.toISOString());

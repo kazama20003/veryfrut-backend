@@ -51,6 +51,7 @@ model ProductUnitMeasurement {
 model Company {
   id    Int    @id @default(autoincrement())
   name  String @unique
+  color String @default("#CCCCCC") // Color por defecto agregado
   areas Area[] // Un área pertenece a una empresa, una empresa tiene varias áreas
 }
 
