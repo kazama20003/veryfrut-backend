@@ -79,19 +79,24 @@ export class UsersService {
 
   async update(id: number, updateUserDto: UpdateUserDto): Promise<User> {
     try {
-      // Verificamos que el usuario exista antes de actualizar
       const userExists = await this.prisma.user.findUnique({ where: { id } });
 
       if (!userExists) {
         throw new NotFoundException(`Usuario con ID ${id} no encontrado`);
       }
 
-      const { areaIds, ...rest } = updateUserDto;
+      const { areaIds, password, ...rest } = updateUserDto;
+
+      // Si se incluye una nueva contraseña, la hasheamos
+      const hashedPassword = password
+        ? await bcrypt.hash(password, 10)
+        : undefined;
 
       const updatedUser = await this.prisma.user.update({
         where: { id },
         data: {
           ...rest,
+          ...(hashedPassword && { password: hashedPassword }), // Solo si existe password
           areas: areaIds ? { set: areaIds.map((id) => ({ id })) } : undefined,
         },
         include: {
