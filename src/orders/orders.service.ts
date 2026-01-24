@@ -9,10 +9,30 @@ import { CheckOrderDto } from './dto/check-order.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Order } from '@prisma/client';
 import { utcToZonedTime, zonedTimeToUtc, format } from 'date-fns-tz';
+import { PaginationQueryDto } from 'src/common/pagination/pagination.dto';
+import { PaginatedResponse } from 'src/common/pagination/paginated-response';
+import { PaginationService } from 'src/common/pagination/pagination.service';
+import { Prisma } from '@prisma/client';
+// ✅ tipo con include (Order + relaciones)
+type OrderWithRelations = Prisma.OrderGetPayload<{
+  include: {
+    orderItems: {
+      include: {
+        product: true;
+        unitMeasurement: true;
+      };
+    };
+    User: true;
+    area: true;
+  };
+}>;
 
 @Injectable()
 export class OrdersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private pagination: PaginationService,
+  ) {}
 
   async create(createOrderDto: CreateOrderDto): Promise<Order> {
     const { userId, areaId, totalAmount, status, observation, orderItems } =
@@ -48,38 +68,71 @@ export class OrdersService {
   }
 
   async findAll(
-    page = 1,
-    limit = 10,
-  ): Promise<{
-    data: Order[];
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  }> {
-    const skip = (page - 1) * limit;
+    query: PaginationQueryDto,
+  ): Promise<PaginatedResponse<OrderWithRelations>> {
+    const { page = 1, limit = 10, sortBy, order = 'desc', q } = query;
 
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.order.findMany({
-        skip,
-        take: limit,
-        include: {
-          orderItems: { include: { product: true } },
-          User: true,
-          area: true,
-        },
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.order.count(),
+    const allowedSortFields = new Set([
+      'id',
+      'createdAt',
+      'updatedAt',
+      'totalAmount',
+      'status',
+      'userId',
+      'areaId',
     ]);
 
-    return {
-      data,
-      total,
+    const safeSortBy =
+      sortBy && allowedSortFields.has(sortBy) ? sortBy : 'createdAt';
+
+    const orderBy = this.pagination.buildOrderBy(safeSortBy, order);
+
+    const qAsNumber = q ? Number(q) : NaN;
+
+    const where: Prisma.OrderWhereInput | undefined = q
+      ? {
+          OR: [
+            ...(Number.isFinite(qAsNumber) ? [{ id: qAsNumber }] : []),
+            { observation: { contains: q, mode: 'insensitive' } },
+          ],
+        }
+      : undefined;
+
+    const include = {
+      orderItems: {
+        include: {
+          product: true,
+          unitMeasurement: true,
+        },
+      },
+      User: true,
+      area: true,
+    } as const;
+
+    const orderDelegate = {
+      findMany: (args: Prisma.OrderFindManyArgs) =>
+        this.prisma.order.findMany(args) as unknown as Promise<
+          OrderWithRelations[]
+        >,
+      count: (args: Prisma.OrderCountArgs) => this.prisma.order.count(args),
+    };
+
+    const result = await this.pagination.paginate<
+      OrderWithRelations,
+      Prisma.OrderFindManyArgs,
+      Prisma.OrderCountArgs
+    >(orderDelegate, {
       page,
       limit,
-      totalPages: Math.ceil(total / limit),
-    };
+      findManyArgs: {
+        where,
+        include,
+        orderBy,
+      },
+      countArgs: { where },
+    });
+
+    return result;
   }
 
   async findOne(id: number): Promise<Order> {

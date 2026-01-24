@@ -12,6 +12,7 @@ import { AreasModule } from './areas/areas.module';
 import { CompanyModule } from './company/company.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { PaginationModule } from './common/pagination/pagination.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     CategoriesModule,
     OrdersModule,
     UnitMeasurementModule,
+    PaginationModule,
     UsersModule,
     AuthModule,
     AreasModule,

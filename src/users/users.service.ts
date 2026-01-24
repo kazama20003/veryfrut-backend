@@ -7,12 +7,18 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdatePasswordDto } from './dto/update-password.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { User } from '@prisma/client';
+import { PaginationQueryDto } from 'src/common/pagination/pagination.dto';
+import { PaginatedResponse } from 'src/common/pagination/paginated-response';
+import { PaginationService } from 'src/common/pagination/pagination.service';
+import { Prisma, User } from '@prisma/client';
+
 import * as bcrypt from 'bcrypt';
 @Injectable()
 export class UsersService {
-  constructor(private prisma: PrismaService) {}
-
+  constructor(
+    private prisma: PrismaService,
+    private pagination: PaginationService,
+  ) {}
   async create(createUserDto: CreateUserDto): Promise<User> {
     try {
       const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
@@ -42,13 +48,54 @@ export class UsersService {
     }
   }
 
-  async findAll(): Promise<User[]> {
+  async findAll(query: PaginationQueryDto): Promise<PaginatedResponse<User>> {
     try {
-      return await this.prisma.user.findMany({
-        include: {
-          areas: true, // si quieres incluir los datos del área
-        },
-      });
+      const page = query.page ?? 1;
+      const limit = query.limit ?? 10;
+
+      // ✅ whitelist para sortBy
+      const allowedSort: Array<keyof Prisma.UserOrderByWithRelationInput> = [
+        'id',
+        'createdAt',
+        'email',
+        'firstName',
+        'lastName',
+        'role',
+      ];
+
+      // ✅ sin any: comprobamos si el string está dentro del array
+      const sortBy: keyof Prisma.UserOrderByWithRelationInput =
+        query.sortBy && allowedSort.includes(query.sortBy as never)
+          ? (query.sortBy as keyof Prisma.UserOrderByWithRelationInput)
+          : 'createdAt';
+
+      const order: Prisma.SortOrder = query.order === 'asc' ? 'asc' : 'desc';
+
+      const where: Prisma.UserWhereInput | undefined = query.q
+        ? {
+            OR: [
+              { firstName: { contains: query.q, mode: 'insensitive' } },
+              { lastName: { contains: query.q, mode: 'insensitive' } },
+              { email: { contains: query.q, mode: 'insensitive' } },
+              { phone: { contains: query.q, mode: 'insensitive' } },
+            ],
+          }
+        : undefined;
+
+      const findManyArgs: Prisma.UserFindManyArgs = {
+        where,
+        include: { areas: true },
+        orderBy: { [sortBy]: order },
+      };
+
+      const countArgs: Prisma.UserCountArgs = { where };
+
+      // ✅ require-await: aquí sí usamos await
+      return await this.pagination.paginate<
+        User,
+        Prisma.UserFindManyArgs,
+        Prisma.UserCountArgs
+      >(this.prisma.user, { page, limit, findManyArgs, countArgs });
     } catch (error) {
       console.error('Error retrieving users:', error);
       throw new InternalServerErrorException('Error al obtener los usuarios');

@@ -1,20 +1,38 @@
+// src/products/products.service.ts
 import {
   Injectable,
   NotFoundException,
   InternalServerErrorException,
 } from '@nestjs/common';
+import { Prisma, Product } from '@prisma/client';
+import { PrismaService } from 'src/prisma/prisma.service';
+
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
-import { PrismaService } from 'src/prisma/prisma.service';
-import { Product } from '@prisma/client';
+
+import { PaginationService } from 'src/common/pagination/pagination.service';
+import { PaginationQueryDto } from 'src/common/pagination/pagination.dto';
+import { PaginatedResponse } from 'src/common/pagination/paginated-response';
 
 function isError(error: unknown): error is Error {
   return error instanceof Error;
 }
 
+// ✅ Tipo de retorno cuando incluimos relaciones
+type ProductWithUnits = Prisma.ProductGetPayload<{
+  include: {
+    productUnits: {
+      include: { unitMeasurement: true };
+    };
+  };
+}>;
+
 @Injectable()
 export class ProductsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private pagination: PaginationService,
+  ) {}
 
   async create(createProductDto: CreateProductDto): Promise<Product> {
     try {
@@ -28,14 +46,12 @@ export class ProductsService {
           categoryId: createProductDto.categoryId,
           productUnits: {
             create: createProductDto.unitMeasurementIds.map(
-              (unitMeasurementId) => ({
-                unitMeasurementId,
-              }),
+              (unitMeasurementId) => ({ unitMeasurementId }),
             ),
           },
         },
         include: {
-          productUnits: true, // opcional, si quieres retornar las unidades relacionadas
+          productUnits: true,
         },
       });
       return product;
@@ -49,39 +65,66 @@ export class ProductsService {
     }
   }
 
-  async findAll(): Promise<Product[]> {
-    try {
-      const products = await this.prisma.product.findMany({
-        include: {
-          productUnits: {
-            include: {
-              unitMeasurement: true, // Incluye las unidades de medida relacionadas
-            },
-          },
-        },
-      });
+  // ✅ PAGINADO + SORT + SEARCH
+  async findAll(
+    query: PaginationQueryDto,
+  ): Promise<PaginatedResponse<ProductWithUnits>> {
+    const { page = 1, limit = 10, sortBy, order = 'desc', q } = query;
 
-      if (!products || products.length === 0) {
-        throw new NotFoundException('No products found in the database.');
-      }
+    const allowedSortFields = new Set([
+      'id',
+      'name',
+      'price',
+      'stock',
+      'createdAt',
+      'updatedAt',
+    ]);
 
-      return products;
-    } catch (error: unknown) {
-      if (
-        typeof error === 'object' &&
-        error !== null &&
-        'code' in error &&
-        (error as { code?: string }).code === 'P2021'
-      ) {
-        throw new NotFoundException(
-          'Product table does not exist in the database',
-        );
-      }
-      throw error; // Re-lanzamos otros errores inesperados
-    }
+    const safeSortBy =
+      sortBy && allowedSortFields.has(sortBy) ? sortBy : undefined;
+    const orderBy = this.pagination.buildOrderBy(safeSortBy, order);
+
+    const where: Prisma.ProductWhereInput | undefined = q
+      ? {
+          OR: [
+            { name: { contains: q, mode: 'insensitive' } },
+            { description: { contains: q, mode: 'insensitive' } },
+          ],
+        }
+      : undefined;
+
+    const include = {
+      productUnits: { include: { unitMeasurement: true } },
+    } as const;
+
+    // ✅ Wrapper que “fija” el tipo de retorno a ProductWithUnits[]
+    const productDelegate = {
+      findMany: (args: Prisma.ProductFindManyArgs) =>
+        this.prisma.product.findMany(args) as unknown as Promise<
+          ProductWithUnits[]
+        >,
+      count: (args: Prisma.ProductCountArgs) => this.prisma.product.count(args),
+    };
+
+    return this.pagination.paginate<
+      ProductWithUnits,
+      Prisma.ProductFindManyArgs,
+      Prisma.ProductCountArgs
+    >(productDelegate, {
+      page,
+      limit,
+      findManyArgs: {
+        where,
+        orderBy,
+        include,
+      },
+      countArgs: {
+        where,
+      },
+    });
   }
 
-  async findOne(id: number): Promise<Product> {
+  async findOne(id: number): Promise<ProductWithUnits> {
     try {
       const product = await this.prisma.product.findUnique({
         where: { id },
@@ -112,7 +155,7 @@ export class ProductsService {
   async update(
     id: number,
     updateProductDto: UpdateProductDto,
-  ): Promise<Product> {
+  ): Promise<ProductWithUnits> {
     try {
       const { unitMeasurementIds, ...rest } = updateProductDto;
 
@@ -122,7 +165,7 @@ export class ProductsService {
           ...rest,
           productUnits: unitMeasurementIds
             ? {
-                deleteMany: {}, // Elimina las relaciones existentes
+                deleteMany: {},
                 create: unitMeasurementIds.map((unitMeasurementId) => ({
                   unitMeasurementId,
                 })),
@@ -140,9 +183,8 @@ export class ProductsService {
 
       return product;
     } catch (error: unknown) {
-      if (error instanceof NotFoundException) {
-        throw error;
-      }
+      if (error instanceof NotFoundException) throw error;
+
       if (isError(error)) {
         throw new InternalServerErrorException(
           'Error updating product: ' + error.message,
@@ -154,21 +196,18 @@ export class ProductsService {
 
   async remove(id: number): Promise<Product> {
     try {
-      // Elimina relaciones en la tabla intermedia
       await this.prisma.productUnitMeasurement.deleteMany({
         where: { productId: id },
       });
 
-      // Elimina el producto una vez eliminadas las relaciones
       const product = await this.prisma.product.delete({
         where: { id },
       });
 
       return product;
     } catch (error: unknown) {
-      if (error instanceof NotFoundException) {
-        throw error;
-      }
+      if (error instanceof NotFoundException) throw error;
+
       if (isError(error)) {
         throw new InternalServerErrorException(
           'Error deleting product: ' + error.message,

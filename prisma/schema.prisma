@@ -109,3 +109,4 @@ model OrderItem {
   product         Product         @relation(fields: [productId], references: [id])
   unitMeasurement UnitMeasurement @relation(fields: [unitMeasurementId], references: [id])
 }
+
