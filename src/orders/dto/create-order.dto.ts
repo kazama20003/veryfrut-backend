@@ -51,7 +51,7 @@ export class CreateOrderDto {
 
   @IsOptional()
   @IsString()
-  observation?: string; // ← Campo agregado
+  observation?: string;
 
   @IsArray()
   @ValidateNested({ each: true })

@@ -8,7 +8,7 @@ import { UpdateOrderDto } from './dto/update-order.dto';
 import { CheckOrderDto } from './dto/check-order.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Order } from '@prisma/client';
-import { utcToZonedTime, zonedTimeToUtc, format } from 'date-fns-tz';
+import { utcToZonedTime, zonedTimeToUtc } from 'date-fns-tz';
 import { PaginationQueryDto } from 'src/common/pagination/pagination.dto';
 import { PaginatedResponse } from 'src/common/pagination/paginated-response';
 import { PaginationService } from 'src/common/pagination/pagination.service';
@@ -229,23 +229,35 @@ export class OrdersService {
 
   async findByUserId(userId: number): Promise<Order[]> {
     return this.prisma.order.findMany({
-      where: { userId },
+      where: {
+        userId,
+      },
       include: {
-        orderItems: { include: { unitMeasurement: true } },
+        orderItems: {
+          include: {
+            product: true,
+            unitMeasurement: true,
+          },
+        },
         User: true,
         area: true,
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: {
+        createdAt: 'desc',
+      },
     });
   }
 
   async checkExistingOrder(query: CheckOrderDto) {
     const { areaId, date } = query;
 
-    if (!areaId)
+    if (!areaId) {
       throw new BadRequestException('El parámetro "areaId" es obligatorio.');
-    if (!date)
+    }
+
+    if (!date) {
       throw new BadRequestException('El parámetro "date" es obligatorio.');
+    }
 
     const areaIdNum = Number(areaId);
     if (isNaN(areaIdNum)) {
@@ -254,50 +266,35 @@ export class OrdersService {
       );
     }
 
-    const parsedDate = new Date(date);
-    if (isNaN(parsedDate.getTime())) {
+    // ✅ Validación segura para YYYY-MM-DD
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       throw new BadRequestException(
-        'Fecha inválida. Debe estar en formato ISO8601.',
+        'Fecha inválida. Formato esperado: YYYY-MM-DD',
       );
     }
 
     const tz = 'America/Lima';
 
-    // Convertimos fecha enviada (como string) a rango UTC en zona horaria de Lima
-    const start = zonedTimeToUtc(`${date}T00:00:00`, tz);
-    const end = zonedTimeToUtc(`${date}T23:59:59.999`, tz);
+    // ✅ Día completo en horario Perú → UTC
+    const startUtc = zonedTimeToUtc(`${date} 00:00:00`, tz);
+    const endUtc = zonedTimeToUtc(`${date} 23:59:59.999`, tz);
 
-    console.log('🟡 Rango generado (UTC):', {
-      startUtc: start.toISOString(),
-      endUtc: end.toISOString(),
+    console.log('🟡 Rango Lima → UTC:', {
+      startUtc: startUtc.toISOString(),
+      endUtc: endUtc.toISOString(),
     });
-
-    // Prueba de hora actual en UTC y Lima
-    const now = new Date();
-    const nowInLima = utcToZonedTime(now, tz);
-    console.log('🕓 Hora actual UTC:', now.toISOString());
-    console.log(
-      '🕓 Hora actual en Lima:',
-      format(nowInLima, 'yyyy-MM-dd HH:mm:ssXXX', { timeZone: tz }),
-    );
 
     const exists = await this.prisma.order.findFirst({
       where: {
         areaId: areaIdNum,
         createdAt: {
-          gte: start,
-          lte: end,
+          gte: startUtc,
+          lte: endUtc,
         },
       },
     });
 
-    if (exists) {
-      console.log('✅ Pedido encontrado:', exists.createdAt.toISOString());
-    } else {
-      console.log('❌ No se encontró pedido en ese rango');
-    }
-
-    return { exists: exists !== null };
+    return { exists: Boolean(exists) };
   }
 
   async filterByDate(startDate: string, endDate: string): Promise<Order[]> {
@@ -307,31 +304,26 @@ export class OrdersService {
       );
     }
 
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+    // ✅ Validación formato YYYY-MM-DD
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
 
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
       throw new BadRequestException(
-        'Fechas inválidas. Deben estar en formato ISO8601.',
+        'Las fechas deben tener el formato YYYY-MM-DD.',
       );
     }
 
-    if (start > end) {
+    if (startDate > endDate) {
       throw new BadRequestException(
-        'La fecha de inicio debe ser anterior a la fecha de fin.',
+        'La fecha de inicio debe ser anterior o igual a la fecha de fin.',
       );
     }
 
     const tz = 'America/Lima';
 
-    const startZoned = utcToZonedTime(start, tz);
-    startZoned.setHours(0, 0, 0, 0);
-
-    const endZoned = utcToZonedTime(end, tz);
-    endZoned.setHours(23, 59, 59, 999);
-
-    const startUtc = new Date(startZoned.toISOString());
-    const endUtc = new Date(endZoned.toISOString());
+    // ✅ Rango completo Lima → UTC
+    const startUtc = zonedTimeToUtc(`${startDate} 00:00:00`, tz);
+    const endUtc = zonedTimeToUtc(`${endDate} 23:59:59.999`, tz);
 
     return this.prisma.order.findMany({
       where: {
@@ -341,7 +333,12 @@ export class OrdersService {
         },
       },
       include: {
-        orderItems: { include: { product: true, unitMeasurement: true } },
+        orderItems: {
+          include: {
+            product: true,
+            unitMeasurement: true,
+          },
+        },
         User: true,
         area: true,
       },
