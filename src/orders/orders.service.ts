@@ -8,31 +8,11 @@ import { UpdateOrderDto } from './dto/update-order.dto';
 import { CheckOrderDto } from './dto/check-order.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Order } from '@prisma/client';
-import { utcToZonedTime, zonedTimeToUtc } from 'date-fns-tz';
-import { PaginationQueryDto } from 'src/common/pagination/pagination.dto';
-import { PaginatedResponse } from 'src/common/pagination/paginated-response';
-import { PaginationService } from 'src/common/pagination/pagination.service';
-import { Prisma } from '@prisma/client';
-// ✅ tipo con include (Order + relaciones)
-type OrderWithRelations = Prisma.OrderGetPayload<{
-  include: {
-    orderItems: {
-      include: {
-        product: true;
-        unitMeasurement: true;
-      };
-    };
-    User: true;
-    area: true;
-  };
-}>;
+import { utcToZonedTime, zonedTimeToUtc, format } from 'date-fns-tz';
 
 @Injectable()
 export class OrdersService {
-  constructor(
-    private prisma: PrismaService,
-    private pagination: PaginationService,
-  ) {}
+  constructor(private prisma: PrismaService) {}
 
   async create(createOrderDto: CreateOrderDto): Promise<Order> {
     const { userId, areaId, totalAmount, status, observation, orderItems } =
@@ -68,71 +48,38 @@ export class OrdersService {
   }
 
   async findAll(
-    query: PaginationQueryDto,
-  ): Promise<PaginatedResponse<OrderWithRelations>> {
-    const { page = 1, limit = 10, sortBy, order = 'desc', q } = query;
+    page = 1,
+    limit = 10,
+  ): Promise<{
+    data: Order[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }> {
+    const skip = (page - 1) * limit;
 
-    const allowedSortFields = new Set([
-      'id',
-      'createdAt',
-      'updatedAt',
-      'totalAmount',
-      'status',
-      'userId',
-      'areaId',
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.order.findMany({
+        skip,
+        take: limit,
+        include: {
+          orderItems: { include: { product: true } },
+          User: true,
+          area: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.order.count(),
     ]);
 
-    const safeSortBy =
-      sortBy && allowedSortFields.has(sortBy) ? sortBy : 'createdAt';
-
-    const orderBy = this.pagination.buildOrderBy(safeSortBy, order);
-
-    const qAsNumber = q ? Number(q) : NaN;
-
-    const where: Prisma.OrderWhereInput | undefined = q
-      ? {
-          OR: [
-            ...(Number.isFinite(qAsNumber) ? [{ id: qAsNumber }] : []),
-            { observation: { contains: q, mode: 'insensitive' } },
-          ],
-        }
-      : undefined;
-
-    const include = {
-      orderItems: {
-        include: {
-          product: true,
-          unitMeasurement: true,
-        },
-      },
-      User: true,
-      area: true,
-    } as const;
-
-    const orderDelegate = {
-      findMany: (args: Prisma.OrderFindManyArgs) =>
-        this.prisma.order.findMany(args) as unknown as Promise<
-          OrderWithRelations[]
-        >,
-      count: (args: Prisma.OrderCountArgs) => this.prisma.order.count(args),
-    };
-
-    const result = await this.pagination.paginate<
-      OrderWithRelations,
-      Prisma.OrderFindManyArgs,
-      Prisma.OrderCountArgs
-    >(orderDelegate, {
+    return {
+      data,
+      total,
       page,
       limit,
-      findManyArgs: {
-        where,
-        include,
-        orderBy,
-      },
-      countArgs: { where },
-    });
-
-    return result;
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async findOne(id: number): Promise<Order> {
@@ -229,35 +176,23 @@ export class OrdersService {
 
   async findByUserId(userId: number): Promise<Order[]> {
     return this.prisma.order.findMany({
-      where: {
-        userId,
-      },
+      where: { userId },
       include: {
-        orderItems: {
-          include: {
-            product: true,
-            unitMeasurement: true,
-          },
-        },
+        orderItems: { include: { unitMeasurement: true } },
         User: true,
         area: true,
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: { createdAt: 'desc' },
     });
   }
 
   async checkExistingOrder(query: CheckOrderDto) {
     const { areaId, date } = query;
 
-    if (!areaId) {
+    if (!areaId)
       throw new BadRequestException('El parámetro "areaId" es obligatorio.');
-    }
-
-    if (!date) {
+    if (!date)
       throw new BadRequestException('El parámetro "date" es obligatorio.');
-    }
 
     const areaIdNum = Number(areaId);
     if (isNaN(areaIdNum)) {
@@ -266,35 +201,50 @@ export class OrdersService {
       );
     }
 
-    // ✅ Validación segura para YYYY-MM-DD
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    const parsedDate = new Date(date);
+    if (isNaN(parsedDate.getTime())) {
       throw new BadRequestException(
-        'Fecha inválida. Formato esperado: YYYY-MM-DD',
+        'Fecha inválida. Debe estar en formato ISO8601.',
       );
     }
 
     const tz = 'America/Lima';
 
-    // ✅ Día completo en horario Perú → UTC
-    const startUtc = zonedTimeToUtc(`${date} 00:00:00`, tz);
-    const endUtc = zonedTimeToUtc(`${date} 23:59:59.999`, tz);
+    // Convertimos fecha enviada (como string) a rango UTC en zona horaria de Lima
+    const start = zonedTimeToUtc(`${date}T00:00:00`, tz);
+    const end = zonedTimeToUtc(`${date}T23:59:59.999`, tz);
 
-    console.log('🟡 Rango Lima → UTC:', {
-      startUtc: startUtc.toISOString(),
-      endUtc: endUtc.toISOString(),
+    console.log('🟡 Rango generado (UTC):', {
+      startUtc: start.toISOString(),
+      endUtc: end.toISOString(),
     });
+
+    // Prueba de hora actual en UTC y Lima
+    const now = new Date();
+    const nowInLima = utcToZonedTime(now, tz);
+    console.log('🕓 Hora actual UTC:', now.toISOString());
+    console.log(
+      '🕓 Hora actual en Lima:',
+      format(nowInLima, 'yyyy-MM-dd HH:mm:ssXXX', { timeZone: tz }),
+    );
 
     const exists = await this.prisma.order.findFirst({
       where: {
         areaId: areaIdNum,
         createdAt: {
-          gte: startUtc,
-          lte: endUtc,
+          gte: start,
+          lte: end,
         },
       },
     });
 
-    return { exists: Boolean(exists) };
+    if (exists) {
+      console.log('✅ Pedido encontrado:', exists.createdAt.toISOString());
+    } else {
+      console.log('❌ No se encontró pedido en ese rango');
+    }
+
+    return { exists: exists !== null };
   }
 
   async filterByDate(startDate: string, endDate: string): Promise<Order[]> {
@@ -304,26 +254,31 @@ export class OrdersService {
       );
     }
 
-    // ✅ Validación formato YYYY-MM-DD
-    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    const start = new Date(startDate);
+    const end = new Date(endDate);
 
-    if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
       throw new BadRequestException(
-        'Las fechas deben tener el formato YYYY-MM-DD.',
+        'Fechas inválidas. Deben estar en formato ISO8601.',
       );
     }
 
-    if (startDate > endDate) {
+    if (start > end) {
       throw new BadRequestException(
-        'La fecha de inicio debe ser anterior o igual a la fecha de fin.',
+        'La fecha de inicio debe ser anterior a la fecha de fin.',
       );
     }
 
     const tz = 'America/Lima';
 
-    // ✅ Rango completo Lima → UTC
-    const startUtc = zonedTimeToUtc(`${startDate} 00:00:00`, tz);
-    const endUtc = zonedTimeToUtc(`${endDate} 23:59:59.999`, tz);
+    const startZoned = utcToZonedTime(start, tz);
+    startZoned.setHours(0, 0, 0, 0);
+
+    const endZoned = utcToZonedTime(end, tz);
+    endZoned.setHours(23, 59, 59, 999);
+
+    const startUtc = new Date(startZoned.toISOString());
+    const endUtc = new Date(endZoned.toISOString());
 
     return this.prisma.order.findMany({
       where: {
@@ -333,12 +288,7 @@ export class OrdersService {
         },
       },
       include: {
-        orderItems: {
-          include: {
-            product: true,
-            unitMeasurement: true,
-          },
-        },
+        orderItems: { include: { product: true, unitMeasurement: true } },
         User: true,
         area: true,
       },
