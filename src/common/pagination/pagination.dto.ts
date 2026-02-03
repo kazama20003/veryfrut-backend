@@ -1,6 +1,6 @@
 // src/common/pagination/pagination.dto.ts
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
 
 export class PaginationQueryDto {
   @IsOptional()
@@ -13,7 +13,6 @@ export class PaginationQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(100)
   limit?: number = 10;
 
   // campo para ordenar (depende del modelo)
