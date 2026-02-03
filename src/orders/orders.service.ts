@@ -113,15 +113,33 @@ export class OrdersService {
         }
       : undefined;
 
-    const include = {
+    const orderInclude = {
       orderItems: {
         include: {
-          product: true,
+          product: {
+            include: {
+              category: true,
+            },
+          },
           unitMeasurement: true,
         },
       },
-      User: true,
-      area: true,
+      User: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          phone: true,
+          address: true,
+          role: true,
+        },
+      },
+      area: {
+        include: {
+          company: true,
+        },
+      },
     } as const;
 
     const delegate = {
@@ -139,7 +157,7 @@ export class OrdersService {
       limit,
       findManyArgs: {
         where,
-        include,
+        include: orderInclude, // ✅ AQUÍ estaba el error
         orderBy,
       },
       countArgs: { where },
