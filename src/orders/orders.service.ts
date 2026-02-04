@@ -3,30 +3,52 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
+import { PrismaService } from 'src/prisma/prisma.service';
+import { PaginationService } from 'src/common/pagination/pagination.service';
+import { PaginationQueryDto } from 'src/common/pagination/pagination.dto';
+import { PaginatedResponse } from 'src/common/pagination/paginated-response';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { CheckOrderDto } from './dto/check-order.dto';
-import { PrismaService } from 'src/prisma/prisma.service';
-import { Order } from '@prisma/client';
-import { utcToZonedTime, zonedTimeToUtc, format } from 'date-fns-tz';
+import { Prisma } from '@prisma/client';
+import { utcToZonedTime, zonedTimeToUtc } from 'date-fns-tz';
+
+/**
+ * Order con todas sus relaciones
+ */
+type OrderWithRelations = Prisma.OrderGetPayload<{
+  include: {
+    orderItems: {
+      include: {
+        product: true;
+        unitMeasurement: true;
+      };
+    };
+    User: true;
+    area: true;
+  };
+}>;
 
 @Injectable()
 export class OrdersService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly pagination: PaginationService,
+  ) {}
 
-  async create(createOrderDto: CreateOrderDto): Promise<Order> {
-    const { userId, areaId, totalAmount, status, observation, orderItems } =
-      createOrderDto;
-
+  // ---------------------------------------------------------------------------
+  // CREATE
+  // ---------------------------------------------------------------------------
+  async create(dto: CreateOrderDto): Promise<OrderWithRelations> {
     return this.prisma.order.create({
       data: {
-        userId,
-        areaId,
-        totalAmount,
-        status,
-        observation,
+        userId: dto.userId,
+        areaId: dto.areaId,
+        totalAmount: dto.totalAmount,
+        status: dto.status,
+        observation: dto.observation,
         orderItems: {
-          create: orderItems.map((item) => ({
+          create: dto.orderItems.map((item) => ({
             productId: item.productId,
             quantity: item.quantity,
             price: item.price,
@@ -47,48 +69,118 @@ export class OrdersService {
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // FIND ALL (PAGINATED)
+  // ---------------------------------------------------------------------------
   async findAll(
-    page = 1,
-    limit = 10,
-  ): Promise<{
-    data: Order[];
-    total: number;
-    page: number;
-    limit: number;
-    totalPages: number;
-  }> {
-    const skip = (page - 1) * limit;
+    query: PaginationQueryDto,
+  ): Promise<PaginatedResponse<OrderWithRelations>> {
+    const { page = 1, limit = 10, sortBy, order = 'desc', q } = query;
 
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.order.findMany({
-        skip,
-        take: limit,
-        include: {
-          orderItems: { include: { product: true } },
-          User: true,
-          area: true,
-        },
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.order.count(),
+    const allowedSortFields = new Set<
+      keyof Prisma.OrderOrderByWithRelationInput
+    >([
+      'id',
+      'createdAt',
+      'updatedAt',
+      'totalAmount',
+      'status',
+      'userId',
+      'areaId',
     ]);
 
-    return {
-      data,
-      total,
+    const safeSortBy = allowedSortFields.has(
+      sortBy as keyof Prisma.OrderOrderByWithRelationInput,
+    )
+      ? sortBy
+      : 'createdAt';
+
+    const orderBy = this.pagination.buildOrderBy(safeSortBy, order);
+
+    const qAsNumber = Number(q);
+
+    const where: Prisma.OrderWhereInput | undefined = q
+      ? {
+          OR: [
+            ...(Number.isFinite(qAsNumber) ? [{ id: qAsNumber }] : []),
+            {
+              observation: {
+                contains: q,
+                mode: 'insensitive',
+              },
+            },
+          ],
+        }
+      : undefined;
+
+    const orderInclude = {
+      orderItems: {
+        include: {
+          product: {
+            include: {
+              category: true,
+            },
+          },
+          unitMeasurement: true,
+        },
+      },
+      User: {
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          phone: true,
+          address: true,
+          role: true,
+        },
+      },
+      area: {
+        include: {
+          company: true,
+        },
+      },
+    } as const;
+
+    const delegate = {
+      findMany: (args: Prisma.OrderFindManyArgs) =>
+        this.prisma.order.findMany(args) as Promise<OrderWithRelations[]>,
+      count: (args: Prisma.OrderCountArgs) => this.prisma.order.count(args),
+    };
+
+    return this.pagination.paginate<
+      OrderWithRelations,
+      Prisma.OrderFindManyArgs,
+      Prisma.OrderCountArgs
+    >(delegate, {
       page,
       limit,
-      totalPages: Math.ceil(total / limit),
-    };
+      findManyArgs: {
+        where,
+        include: orderInclude, // ✅ AQUÍ estaba el error
+        orderBy,
+      },
+      countArgs: { where },
+    });
   }
 
-  async findOne(id: number): Promise<Order> {
-    if (!id) throw new BadRequestException('El ID es obligatorio');
+  // ---------------------------------------------------------------------------
+  // FIND ONE
+  // ---------------------------------------------------------------------------
+  async findOne(id: number): Promise<OrderWithRelations> {
+    if (!id) {
+      throw new BadRequestException('El ID es obligatorio');
+    }
 
     const order = await this.prisma.order.findUnique({
       where: { id },
       include: {
-        orderItems: { include: { unitMeasurement: true } },
+        orderItems: {
+          include: {
+            product: true,
+            unitMeasurement: true,
+          },
+        },
         User: true,
         area: true,
       },
@@ -101,18 +193,22 @@ export class OrdersService {
     return order;
   }
 
-  async update(id: number, updateOrderDto: UpdateOrderDto): Promise<Order> {
-    const { totalAmount, status, observation, orderItems } = updateOrderDto;
+  // ---------------------------------------------------------------------------
+  // UPDATE (MISMO DÍA – HORA PERÚ)
+  // ---------------------------------------------------------------------------
+  async update(id: number, dto: UpdateOrderDto): Promise<OrderWithRelations> {
+    const existingOrder = await this.prisma.order.findUnique({
+      where: { id },
+    });
 
-    const existingOrder = await this.prisma.order.findUnique({ where: { id } });
     if (!existingOrder) {
       throw new NotFoundException(`Orden con ID ${id} no encontrada`);
     }
 
-    const peruTZ = 'America/Lima';
+    const tz = 'America/Lima';
 
-    const createdAtPeru = utcToZonedTime(existingOrder.createdAt, peruTZ);
-    const nowPeru = utcToZonedTime(new Date(), peruTZ);
+    const createdAtPeru = utcToZonedTime(existingOrder.createdAt, tz);
+    const nowPeru = utcToZonedTime(new Date(), tz);
 
     const startOfDay = new Date(createdAtPeru);
     startOfDay.setHours(0, 0, 0, 0);
@@ -122,20 +218,20 @@ export class OrdersService {
 
     if (nowPeru < startOfDay || nowPeru >= endOfDay) {
       throw new BadRequestException(
-        'La orden solo puede ser modificada durante el mismo día en que fue creada (horario de Perú).',
+        'La orden solo puede modificarse el mismo día de su creación (hora Perú).',
       );
     }
 
     return this.prisma.order.update({
       where: { id },
       data: {
-        totalAmount,
-        status,
-        observation,
-        orderItems: orderItems
+        totalAmount: dto.totalAmount,
+        status: dto.status,
+        observation: dto.observation,
+        orderItems: dto.orderItems
           ? {
               deleteMany: {},
-              create: orderItems.map((item) => ({
+              create: dto.orderItems.map((item) => ({
                 productId: item.productId,
                 quantity: item.quantity,
                 price: item.price,
@@ -157,128 +253,88 @@ export class OrdersService {
     });
   }
 
-  async remove(id: number): Promise<Order> {
-    const order = await this.prisma.order.findUnique({ where: { id } });
-    if (!order) {
+  // ---------------------------------------------------------------------------
+  // DELETE
+  // ---------------------------------------------------------------------------
+  async remove(id: number): Promise<void> {
+    const exists = await this.prisma.order.findUnique({ where: { id } });
+
+    if (!exists) {
       throw new NotFoundException(`Orden con ID ${id} no encontrada`);
     }
 
-    await this.prisma.orderItem.deleteMany({ where: { orderId: id } });
+    await this.prisma.orderItem.deleteMany({
+      where: { orderId: id },
+    });
 
-    return this.prisma.order.delete({
+    await this.prisma.order.delete({
       where: { id },
-      include: {
-        orderItems: true,
-        User: true,
-      },
     });
   }
 
-  async findByUserId(userId: number): Promise<Order[]> {
-    return this.prisma.order.findMany({
-      where: { userId },
-      include: {
-        orderItems: { include: { unitMeasurement: true } },
-        User: true,
-        area: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-  }
-
+  // ---------------------------------------------------------------------------
+  // CHECK EXISTING ORDER BY AREA + DATE
+  // ---------------------------------------------------------------------------
   async checkExistingOrder(query: CheckOrderDto) {
     const { areaId, date } = query;
 
-    if (!areaId)
+    if (!areaId) {
       throw new BadRequestException('El parámetro "areaId" es obligatorio.');
-    if (!date)
-      throw new BadRequestException('El parámetro "date" es obligatorio.');
-
-    const areaIdNum = Number(areaId);
-    if (isNaN(areaIdNum)) {
-      throw new BadRequestException(
-        'El parámetro "areaId" debe ser un número.',
-      );
     }
 
-    const parsedDate = new Date(date);
-    if (isNaN(parsedDate.getTime())) {
+    if (!date) {
+      throw new BadRequestException('El parámetro "date" es obligatorio.');
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       throw new BadRequestException(
-        'Fecha inválida. Debe estar en formato ISO8601.',
+        'Fecha inválida. Formato esperado: YYYY-MM-DD',
       );
     }
 
     const tz = 'America/Lima';
 
-    // Convertimos fecha enviada (como string) a rango UTC en zona horaria de Lima
-    const start = zonedTimeToUtc(`${date}T00:00:00`, tz);
-    const end = zonedTimeToUtc(`${date}T23:59:59.999`, tz);
-
-    console.log('🟡 Rango generado (UTC):', {
-      startUtc: start.toISOString(),
-      endUtc: end.toISOString(),
-    });
-
-    // Prueba de hora actual en UTC y Lima
-    const now = new Date();
-    const nowInLima = utcToZonedTime(now, tz);
-    console.log('🕓 Hora actual UTC:', now.toISOString());
-    console.log(
-      '🕓 Hora actual en Lima:',
-      format(nowInLima, 'yyyy-MM-dd HH:mm:ssXXX', { timeZone: tz }),
-    );
+    const startUtc = zonedTimeToUtc(`${date} 00:00:00`, tz);
+    const endUtc = zonedTimeToUtc(`${date} 23:59:59.999`, tz);
 
     const exists = await this.prisma.order.findFirst({
       where: {
-        areaId: areaIdNum,
+        areaId: Number(areaId),
         createdAt: {
-          gte: start,
-          lte: end,
+          gte: startUtc,
+          lte: endUtc,
         },
       },
     });
 
-    if (exists) {
-      console.log('✅ Pedido encontrado:', exists.createdAt.toISOString());
-    } else {
-      console.log('❌ No se encontró pedido en ese rango');
-    }
-
-    return { exists: exists !== null };
+    return { exists: Boolean(exists) };
   }
 
-  async filterByDate(startDate: string, endDate: string): Promise<Order[]> {
-    if (!startDate || !endDate) {
+  // ---------------------------------------------------------------------------
+  // FILTER BY DATE RANGE
+  // ---------------------------------------------------------------------------
+  async filterByDate(
+    startDate: string,
+    endDate: string,
+  ): Promise<OrderWithRelations[]> {
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+
+    if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
       throw new BadRequestException(
-        'Los parámetros "startDate" y "endDate" son obligatorios.',
+        'Las fechas deben tener el formato YYYY-MM-DD.',
       );
     }
 
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    if (startDate > endDate) {
       throw new BadRequestException(
-        'Fechas inválidas. Deben estar en formato ISO8601.',
-      );
-    }
-
-    if (start > end) {
-      throw new BadRequestException(
-        'La fecha de inicio debe ser anterior a la fecha de fin.',
+        'La fecha de inicio no puede ser mayor que la fecha de fin.',
       );
     }
 
     const tz = 'America/Lima';
 
-    const startZoned = utcToZonedTime(start, tz);
-    startZoned.setHours(0, 0, 0, 0);
-
-    const endZoned = utcToZonedTime(end, tz);
-    endZoned.setHours(23, 59, 59, 999);
-
-    const startUtc = new Date(startZoned.toISOString());
-    const endUtc = new Date(endZoned.toISOString());
+    const startUtc = zonedTimeToUtc(`${startDate} 00:00:00`, tz);
+    const endUtc = zonedTimeToUtc(`${endDate} 23:59:59.999`, tz);
 
     return this.prisma.order.findMany({
       where: {
@@ -288,11 +344,39 @@ export class OrdersService {
         },
       },
       include: {
-        orderItems: { include: { product: true, unitMeasurement: true } },
+        orderItems: {
+          include: {
+            product: true,
+            unitMeasurement: true,
+          },
+        },
         User: true,
         area: true,
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  }
+
+  async findByUserId(userId: number): Promise<OrderWithRelations[]> {
+    return this.prisma.order.findMany({
+      where: {
+        userId,
+      },
+      include: {
+        orderItems: {
+          include: {
+            product: true,
+            unitMeasurement: true,
+          },
+        },
+        User: true,
+        area: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
     });
   }
 }
