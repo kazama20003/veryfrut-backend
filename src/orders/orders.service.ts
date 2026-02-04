@@ -5,8 +5,6 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { PaginationService } from 'src/common/pagination/pagination.service';
-import { PaginationQueryDto } from 'src/common/pagination/pagination.dto';
-import { PaginatedResponse } from 'src/common/pagination/paginated-response';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { CheckOrderDto } from './dto/check-order.dto';
@@ -84,10 +82,9 @@ export class OrdersService {
   // ---------------------------------------------------------------------------
   // FIND ALL (PAGINATED)
   // ---------------------------------------------------------------------------
-  async findAll(
-    query: PaginationQueryDto,
-  ): Promise<PaginatedResponse<OrderWithRelations>> {
-    const { page = 1, limit = 10, sortBy, order = 'desc', q } = query;
+  async findAll(): Promise<OrderWithRelations[]> {
+    const sortBy = 'createdAt';
+    const order: 'asc' | 'desc' = 'desc';
 
     const allowedSortFields = new Set<
       keyof Prisma.OrderOrderByWithRelationInput
@@ -101,49 +98,14 @@ export class OrdersService {
       'areaId',
     ]);
 
-    const safeSortBy = allowedSortFields.has(
-      sortBy as keyof Prisma.OrderOrderByWithRelationInput,
-    )
-      ? sortBy
-      : 'createdAt';
+    const safeSortBy: keyof Prisma.OrderOrderByWithRelationInput =
+      allowedSortFields.has(sortBy) ? sortBy : 'createdAt';
 
     const orderBy = this.pagination.buildOrderBy(safeSortBy, order);
 
-    const qAsNumber = Number(q);
-
-    const where: Prisma.OrderWhereInput | undefined = q
-      ? {
-          OR: [
-            ...(Number.isFinite(qAsNumber) ? [{ id: qAsNumber }] : []),
-            {
-              observation: {
-                contains: q,
-                mode: 'insensitive',
-              },
-            },
-          ],
-        }
-      : undefined;
-
-    const delegate = {
-      findMany: (args: Prisma.OrderFindManyArgs) =>
-        this.prisma.order.findMany(args) as Promise<OrderWithRelations[]>,
-      count: (args: Prisma.OrderCountArgs) => this.prisma.order.count(args),
-    };
-
-    return this.pagination.paginate<
-      OrderWithRelations,
-      Prisma.OrderFindManyArgs,
-      Prisma.OrderCountArgs
-    >(delegate, {
-      page,
-      limit,
-      findManyArgs: {
-        where,
-        include: fullOrderInclude,
-        orderBy,
-      },
-      countArgs: { where },
+    return this.prisma.order.findMany({
+      include: fullOrderInclude,
+      orderBy,
     });
   }
 

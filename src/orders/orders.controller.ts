@@ -12,7 +12,6 @@ import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { CheckOrderDto } from './dto/check-order.dto';
-import { PaginationQueryDto } from 'src/common/pagination/pagination.dto';
 @Controller('orders')
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
@@ -23,8 +22,8 @@ export class OrdersController {
   }
 
   @Get()
-  findAll(@Query() query: PaginationQueryDto) {
-    return this.ordersService.findAll(query);
+  findAll() {
+    return this.ordersService.findAll();
   }
 
   @Get('check')
