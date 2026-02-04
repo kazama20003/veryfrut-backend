@@ -27,6 +27,7 @@ export class OrdersController {
     return this.ordersService.findAll(query);
   }
 
+  // 🔹 Rutas fijas primero
   @Get('by-day')
   findAllByDay(
     @Query()
@@ -58,6 +59,7 @@ export class OrdersController {
     return this.ordersService.filterByDate(startDate, endDate);
   }
 
+  // 🔹 Ruta dinámica al final
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.ordersService.findOne(+id);
