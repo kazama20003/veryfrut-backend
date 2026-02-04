@@ -68,21 +68,8 @@ export class ProductsService {
   // ✅ PAGINADO + SORT + SEARCH
   async findAll(
     query: PaginationQueryDto,
-  ): Promise<PaginatedResponse<ProductWithUnits>> {
-    const { page = 1, limit = 10, sortBy, order = 'desc', q } = query;
-
-    const allowedSortFields = new Set([
-      'id',
-      'name',
-      'price',
-      'stock',
-      'createdAt',
-      'updatedAt',
-    ]);
-
-    const safeSortBy =
-      sortBy && allowedSortFields.has(sortBy) ? sortBy : undefined;
-    const orderBy = this.pagination.buildOrderBy(safeSortBy, order);
+  ): Promise<PaginatedResponse<ProductWithUnits> | ProductWithUnits[]> {
+    const { page, limit, sortBy, order = 'desc', q } = query;
 
     const where: Prisma.ProductWhereInput | undefined = q
       ? {
@@ -97,7 +84,29 @@ export class ProductsService {
       productUnits: { include: { unitMeasurement: true } },
     } as const;
 
-    // ✅ Wrapper que “fija” el tipo de retorno a ProductWithUnits[]
+    // 👉 SI NO VIENE PAGINACIÓN → MODO CLÁSICO
+    if (!page && !limit) {
+      return this.prisma.product.findMany({
+        where,
+        include,
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+
+    // 👉 SI VIENE PAGINACIÓN → MODO MODERNO
+    const allowedSortFields = new Set([
+      'id',
+      'name',
+      'price',
+      'stock',
+      'createdAt',
+      'updatedAt',
+    ]);
+
+    const safeSortBy =
+      sortBy && allowedSortFields.has(sortBy) ? sortBy : undefined;
+    const orderBy = this.pagination.buildOrderBy(safeSortBy, order);
+
     const productDelegate = {
       findMany: (args: Prisma.ProductFindManyArgs) =>
         this.prisma.product.findMany(args) as unknown as Promise<
