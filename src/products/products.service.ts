@@ -11,8 +11,6 @@ import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 
 import { PaginationService } from 'src/common/pagination/pagination.service';
-import { PaginationQueryDto } from 'src/common/pagination/pagination.dto';
-import { PaginatedResponse } from 'src/common/pagination/paginated-response';
 
 function isError(error: unknown): error is Error {
   return error instanceof Error;
@@ -66,11 +64,7 @@ export class ProductsService {
   }
 
   // ✅ PAGINADO + SORT + SEARCH
-  async findAll(
-    query: PaginationQueryDto,
-  ): Promise<PaginatedResponse<ProductWithUnits> | ProductWithUnits[]> {
-    const { page, limit, sortBy, order = 'desc', q } = query;
-
+  async findAll(q?: string): Promise<ProductWithUnits[]> {
     const where: Prisma.ProductWhereInput | undefined = q
       ? {
           OR: [
@@ -80,55 +74,17 @@ export class ProductsService {
         }
       : undefined;
 
-    const include = {
-      productUnits: { include: { unitMeasurement: true } },
-    } as const;
-
-    // 👉 SI NO VIENE PAGINACIÓN → MODO CLÁSICO
-    if (!page && !limit) {
-      return this.prisma.product.findMany({
-        where,
-        include,
-        orderBy: { createdAt: 'desc' },
-      });
-    }
-
-    // 👉 SI VIENE PAGINACIÓN → MODO MODERNO
-    const allowedSortFields = new Set([
-      'id',
-      'name',
-      'price',
-      'stock',
-      'createdAt',
-      'updatedAt',
-    ]);
-
-    const safeSortBy =
-      sortBy && allowedSortFields.has(sortBy) ? sortBy : undefined;
-    const orderBy = this.pagination.buildOrderBy(safeSortBy, order);
-
-    const productDelegate = {
-      findMany: (args: Prisma.ProductFindManyArgs) =>
-        this.prisma.product.findMany(args) as unknown as Promise<
-          ProductWithUnits[]
-        >,
-      count: (args: Prisma.ProductCountArgs) => this.prisma.product.count(args),
-    };
-
-    return this.pagination.paginate<
-      ProductWithUnits,
-      Prisma.ProductFindManyArgs,
-      Prisma.ProductCountArgs
-    >(productDelegate, {
-      page,
-      limit,
-      findManyArgs: {
-        where,
-        orderBy,
-        include,
+    return this.prisma.product.findMany({
+      where,
+      include: {
+        productUnits: {
+          include: {
+            unitMeasurement: true,
+          },
+        },
       },
-      countArgs: {
-        where,
+      orderBy: {
+        createdAt: 'desc',
       },
     });
   }

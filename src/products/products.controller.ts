@@ -11,7 +11,6 @@ import {
 import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
-import { PaginationQueryDto } from 'src/common/pagination/pagination.dto';
 @Controller('products')
 export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
@@ -23,8 +22,8 @@ export class ProductsController {
   }
 
   @Get()
-  findAll(@Query() query: PaginationQueryDto) {
-    return this.productsService.findAll(query);
+  findAll(@Query('q') q?: string) {
+    return this.productsService.findAll(q);
   }
 
   @Get(':id')
