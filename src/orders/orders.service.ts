@@ -8,7 +8,7 @@ import { UpdateOrderDto } from './dto/update-order.dto';
 import { CheckOrderDto } from './dto/check-order.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Order } from '@prisma/client';
-import { utcToZonedTime, zonedTimeToUtc } from 'date-fns-tz';
+import { utcToZonedTime, zonedTimeToUtc, format } from 'date-fns-tz';
 
 @Injectable()
 export class OrdersService {
@@ -210,10 +210,23 @@ export class OrdersService {
 
     const tz = 'America/Lima';
 
-    const start = zonedTimeToUtc(new Date(`${date}T00:00:00`), tz);
-    const end = zonedTimeToUtc(new Date(`${date}T23:59:59.999`), tz);
+    // Convertimos fecha enviada (como string) a rango UTC en zona horaria de Lima
+    const start = zonedTimeToUtc(`${date}T00:00:00`, tz);
+    const end = zonedTimeToUtc(`${date}T23:59:59.999`, tz);
 
-    console.log({ startUtc: start.toISOString(), endUtc: end.toISOString() });
+    console.log('🟡 Rango generado (UTC):', {
+      startUtc: start.toISOString(),
+      endUtc: end.toISOString(),
+    });
+
+    // Prueba de hora actual en UTC y Lima
+    const now = new Date();
+    const nowInLima = utcToZonedTime(now, tz);
+    console.log('🕓 Hora actual UTC:', now.toISOString());
+    console.log(
+      '🕓 Hora actual en Lima:',
+      format(nowInLima, 'yyyy-MM-dd HH:mm:ssXXX', { timeZone: tz }),
+    );
 
     const exists = await this.prisma.order.findFirst({
       where: {
@@ -224,6 +237,12 @@ export class OrdersService {
         },
       },
     });
+
+    if (exists) {
+      console.log('✅ Pedido encontrado:', exists.createdAt.toISOString());
+    } else {
+      console.log('❌ No se encontró pedido en ese rango');
+    }
 
     return { exists: exists !== null };
   }
