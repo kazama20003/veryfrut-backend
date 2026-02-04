@@ -27,6 +27,19 @@ export class OrdersController {
     return this.ordersService.findAll(query);
   }
 
+  @Get('by-day')
+  findAllByDay(
+    @Query()
+    query: {
+      date: string;
+      sortBy?: string;
+      order?: 'asc' | 'desc';
+      q?: string;
+    },
+  ) {
+    return this.ordersService.findAllByDay(query);
+  }
+
   @Get('check')
   async checkExistingOrder(@Query() query: CheckOrderDto) {
     return this.ordersService.checkExistingOrder(query);

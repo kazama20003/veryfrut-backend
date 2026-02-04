@@ -324,4 +324,75 @@ export class OrdersService {
       },
     });
   }
+
+  // ---------------------------------------------------------------------------
+  // FIND ALL BY DAY (NO PAGINATION)
+  // ---------------------------------------------------------------------------
+  async findAllByDay(query: {
+    date: string;
+    sortBy?: string;
+    order?: 'asc' | 'desc';
+    q?: string;
+  }): Promise<OrderWithRelations[]> {
+    const { date, sortBy, order = 'desc', q } = query;
+
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new BadRequestException(
+        'El parámetro "date" es obligatorio y debe tener formato YYYY-MM-DD.',
+      );
+    }
+
+    const tz = 'America/Lima';
+    const startUtc = zonedTimeToUtc(`${date} 00:00:00`, tz);
+    const endUtc = zonedTimeToUtc(`${date} 23:59:59.999`, tz);
+
+    const allowedSortFields = new Set<
+      keyof Prisma.OrderOrderByWithRelationInput
+    >([
+      'id',
+      'createdAt',
+      'updatedAt',
+      'totalAmount',
+      'status',
+      'userId',
+      'areaId',
+    ]);
+
+    const safeSortBy = allowedSortFields.has(
+      sortBy as keyof Prisma.OrderOrderByWithRelationInput,
+    )
+      ? sortBy
+      : 'createdAt';
+
+    const orderBy: Prisma.OrderOrderByWithRelationInput = {
+      [safeSortBy as keyof Prisma.OrderOrderByWithRelationInput]: order,
+    };
+
+    const qAsNumber = Number(q);
+
+    const where: Prisma.OrderWhereInput = {
+      createdAt: {
+        gte: startUtc,
+        lte: endUtc,
+      },
+
+      ...(q && {
+        OR: [
+          ...(Number.isFinite(qAsNumber) ? [{ id: qAsNumber }] : []),
+          {
+            observation: {
+              contains: q,
+              mode: 'insensitive',
+            },
+          },
+        ],
+      }),
+    };
+
+    return this.prisma.order.findMany({
+      where,
+      include: fullOrderInclude,
+      orderBy,
+    });
+  }
 }
