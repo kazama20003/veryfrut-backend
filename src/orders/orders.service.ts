@@ -8,7 +8,7 @@ import { PaginationService } from 'src/common/pagination/pagination.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { CheckOrderDto } from './dto/check-order.dto';
-import { Prisma } from '@prisma/client';
+import { Prisma, Order } from '@prisma/client';
 import { utcToZonedTime, zonedTimeToUtc } from 'date-fns-tz';
 
 // Reusable include para todas las queries — incluye category en product y company en area
@@ -82,31 +82,39 @@ export class OrdersService {
   // ---------------------------------------------------------------------------
   // FIND ALL (PAGINATED)
   // ---------------------------------------------------------------------------
-  async findAll(): Promise<OrderWithRelations[]> {
-    const sortBy = 'createdAt';
-    const order: 'asc' | 'desc' = 'desc';
+  async findAll(
+    page = 1,
+    limit = 10,
+  ): Promise<{
+    data: Order[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }> {
+    const skip = (page - 1) * limit;
 
-    const allowedSortFields = new Set<
-      keyof Prisma.OrderOrderByWithRelationInput
-    >([
-      'id',
-      'createdAt',
-      'updatedAt',
-      'totalAmount',
-      'status',
-      'userId',
-      'areaId',
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.order.findMany({
+        skip,
+        take: limit,
+        include: {
+          orderItems: { include: { product: true } },
+          User: true,
+          area: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.order.count(),
     ]);
 
-    const safeSortBy: keyof Prisma.OrderOrderByWithRelationInput =
-      allowedSortFields.has(sortBy) ? sortBy : 'createdAt';
-
-    const orderBy = this.pagination.buildOrderBy(safeSortBy, order);
-
-    return this.prisma.order.findMany({
-      include: fullOrderInclude,
-      orderBy,
-    });
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   // ---------------------------------------------------------------------------
