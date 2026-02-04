@@ -13,20 +13,41 @@ import { CheckOrderDto } from './dto/check-order.dto';
 import { Prisma } from '@prisma/client';
 import { utcToZonedTime, zonedTimeToUtc } from 'date-fns-tz';
 
+// Reusable include para todas las queries — incluye category en product y company en area
+const fullOrderInclude = {
+  orderItems: {
+    include: {
+      product: {
+        include: {
+          category: true,
+        },
+      },
+      unitMeasurement: true,
+    },
+  },
+  User: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      email: true,
+      phone: true,
+      address: true,
+      role: true,
+    },
+  },
+  area: {
+    include: {
+      company: true,
+    },
+  },
+} as const;
+
 /**
- * Order con todas sus relaciones
+ * Order con todas sus relaciones (tipado automáticamente a partir de fullOrderInclude)
  */
 type OrderWithRelations = Prisma.OrderGetPayload<{
-  include: {
-    orderItems: {
-      include: {
-        product: true;
-        unitMeasurement: true;
-      };
-    };
-    User: true;
-    area: true;
-  };
+  include: typeof fullOrderInclude;
 }>;
 
 @Injectable()
@@ -56,16 +77,7 @@ export class OrdersService {
           })),
         },
       },
-      include: {
-        orderItems: {
-          include: {
-            product: true,
-            unitMeasurement: true,
-          },
-        },
-        User: true,
-        area: true,
-      },
+      include: fullOrderInclude,
     });
   }
 
@@ -113,35 +125,6 @@ export class OrdersService {
         }
       : undefined;
 
-    const orderInclude = {
-      orderItems: {
-        include: {
-          product: {
-            include: {
-              category: true,
-            },
-          },
-          unitMeasurement: true,
-        },
-      },
-      User: {
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          email: true,
-          phone: true,
-          address: true,
-          role: true,
-        },
-      },
-      area: {
-        include: {
-          company: true,
-        },
-      },
-    } as const;
-
     const delegate = {
       findMany: (args: Prisma.OrderFindManyArgs) =>
         this.prisma.order.findMany(args) as Promise<OrderWithRelations[]>,
@@ -157,7 +140,7 @@ export class OrdersService {
       limit,
       findManyArgs: {
         where,
-        include: orderInclude, // ✅ AQUÍ estaba el error
+        include: fullOrderInclude,
         orderBy,
       },
       countArgs: { where },
@@ -174,16 +157,7 @@ export class OrdersService {
 
     const order = await this.prisma.order.findUnique({
       where: { id },
-      include: {
-        orderItems: {
-          include: {
-            product: true,
-            unitMeasurement: true,
-          },
-        },
-        User: true,
-        area: true,
-      },
+      include: fullOrderInclude,
     });
 
     if (!order) {
@@ -240,16 +214,7 @@ export class OrdersService {
             }
           : undefined,
       },
-      include: {
-        orderItems: {
-          include: {
-            product: true,
-            unitMeasurement: true,
-          },
-        },
-        User: true,
-        area: true,
-      },
+      include: fullOrderInclude,
     });
   }
 
@@ -263,19 +228,17 @@ export class OrdersService {
       throw new NotFoundException(`Orden con ID ${id} no encontrada`);
     }
 
-    await this.prisma.orderItem.deleteMany({
-      where: { orderId: id },
-    });
-
-    await this.prisma.order.delete({
-      where: { id },
-    });
+    // Transacción para asegurar consistencia
+    await this.prisma.$transaction([
+      this.prisma.orderItem.deleteMany({ where: { orderId: id } }),
+      this.prisma.order.delete({ where: { id } }),
+    ]);
   }
 
   // ---------------------------------------------------------------------------
   // CHECK EXISTING ORDER BY AREA + DATE
   // ---------------------------------------------------------------------------
-  async checkExistingOrder(query: CheckOrderDto) {
+  async checkExistingOrder(query: CheckOrderDto): Promise<{ exists: boolean }> {
     const { areaId, date } = query;
 
     if (!areaId) {
@@ -343,16 +306,7 @@ export class OrdersService {
           lte: endUtc,
         },
       },
-      include: {
-        orderItems: {
-          include: {
-            product: true,
-            unitMeasurement: true,
-          },
-        },
-        User: true,
-        area: true,
-      },
+      include: fullOrderInclude,
       orderBy: {
         createdAt: 'desc',
       },
@@ -364,16 +318,7 @@ export class OrdersService {
       where: {
         userId,
       },
-      include: {
-        orderItems: {
-          include: {
-            product: true,
-            unitMeasurement: true,
-          },
-        },
-        User: true,
-        area: true,
-      },
+      include: fullOrderInclude,
       orderBy: {
         createdAt: 'desc',
       },
