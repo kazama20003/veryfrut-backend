@@ -8,13 +8,20 @@ export class SupliersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateSuplierDto) {
-    return this.prisma.supplier.create({
-      data: dto,
+    return await this.prisma.supplier.create({
+      data: {
+        name: dto.name,
+        companyName: dto.companyName,
+        contactName: dto.contactName,
+        phone: dto.phone,
+        email: dto.email,
+        address: dto.address,
+      },
     });
   }
 
   async findAll() {
-    return this.prisma.supplier.findMany({
+    return await this.prisma.supplier.findMany({
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -39,16 +46,23 @@ export class SupliersService {
   async update(id: number, dto: UpdateSuplierDto) {
     await this.findOne(id); // valida existencia
 
-    return this.prisma.supplier.update({
+    return await this.prisma.supplier.update({
       where: { id },
-      data: dto,
+      data: {
+        name: dto.name,
+        companyName: dto.companyName,
+        contactName: dto.contactName,
+        phone: dto.phone,
+        email: dto.email,
+        address: dto.address,
+      },
     });
   }
 
   async remove(id: number) {
     await this.findOne(id);
 
-    return this.prisma.supplier.delete({
+    return await this.prisma.supplier.delete({
       where: { id },
     });
   }
