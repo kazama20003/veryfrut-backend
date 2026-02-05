@@ -42,6 +42,42 @@ export class SupliersService {
         limit,
         findManyArgs: {
           orderBy: orderBy || { createdAt: 'desc' },
+          include: {
+            purchases: {
+              orderBy: { createdAt: 'desc' },
+              include: {
+                purchaseItems: {
+                  select: {
+                    id: true,
+                    productId: true,
+                    quantity: true,
+                    unitCost: true,
+                    totalCost: true,
+                    unitMeasurement: {
+                      select: {
+                        id: true,
+                        name: true,
+                      },
+                    },
+                    product: {
+                      select: {
+                        id: true,
+                        name: true,
+                        // NO incluimos price
+                        category: {
+                          select: {
+                            id: true,
+                            name: true,
+                          },
+                        },
+                        imageUrl: true, // opcional, si quieres mostrar imagen
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
         },
         countArgs: {},
       });
