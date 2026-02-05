@@ -21,6 +21,9 @@ model Product {
   category     Category                 @relation(fields: [categoryId], references: [id])
   productUnits ProductUnitMeasurement[] // Relación muchos a muchos
   orderItems   OrderItem[]
+
+  // <-- campo inverso para PurchaseItem (no crea columna nueva en Product)
+  purchaseItems PurchaseItem[]
 }
 
 model Category {
@@ -35,6 +38,9 @@ model UnitMeasurement {
   description  String? // Ej: "Kilogramos", "Unidades", "Litros"
   productUnits ProductUnitMeasurement[] // Relación muchos a muchos
   OrderItem    OrderItem[]
+
+  // <-- campo inverso para PurchaseItem
+  purchaseItems PurchaseItem[]
 }
 
 model ProductUnitMeasurement {
@@ -64,6 +70,9 @@ model Area {
   company Company @relation(fields: [companyId], references: [id])
   users   User[]
   orders  Order[]
+
+  // <-- campo inverso para Purchase
+  purchases Purchase[]
 }
 
 model User {
@@ -110,3 +119,54 @@ model OrderItem {
   unitMeasurement UnitMeasurement @relation(fields: [unitMeasurementId], references: [id])
 }
 
+// --- Nuevos modelos para compras/proveedores (añadir tablas nuevas) ---
+
+model Supplier {
+  id          Int      @id @default(autoincrement())
+  name        String
+  companyName String?
+  contactName String?
+  phone       String?
+  email       String?  @unique
+  address     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  purchases Purchase[]
+}
+
+model Purchase {
+  id          Int       @id @default(autoincrement())
+  supplierId  Int
+  areaId      Int?
+  totalAmount Float
+  status      String // e.g. "created", "paid", "pending", "cancelled"
+  paid        Boolean   @default(false)
+  paymentDate DateTime?
+  observation String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  supplier      Supplier       @relation(fields: [supplierId], references: [id])
+  purchaseItems PurchaseItem[]
+  area          Area?          @relation(fields: [areaId], references: [id])
+}
+
+model PurchaseItem {
+  id                Int      @id @default(autoincrement())
+  purchaseId        Int
+  productId         Int? // usa tu tabla Product existente si aplica
+  description       String? // "Saco de cebolla"
+  quantity          Float
+  unitMeasurementId Int? // opcional: referencia UnitMeasurement existente
+  unitCost          Float // costo por unidad (lo que pagaste)
+  totalCost         Float // quantity * unitCost
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  purchase        Purchase         @relation(fields: [purchaseId], references: [id])
+  product         Product?         @relation(fields: [productId], references: [id])
+  unitMeasurement UnitMeasurement? @relation(fields: [unitMeasurementId], references: [id])
+
+  @@index([purchaseId])
+}
