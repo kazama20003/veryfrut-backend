@@ -1,69 +1,115 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateSuplierDto } from './dto/create-suplier.dto';
 import { UpdateSuplierDto } from './dto/update-suplier.dto';
+import { Supplier } from '@prisma/client';
 
 @Injectable()
 export class SupliersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateSuplierDto) {
-    return await this.prisma.supplier.create({
-      data: {
-        name: dto.name,
-        companyName: dto.companyName,
-        contactName: dto.contactName,
-        phone: dto.phone,
-        email: dto.email,
-        address: dto.address,
-      },
-    });
-  }
-
-  async findAll() {
-    return await this.prisma.supplier.findMany({
-      orderBy: { createdAt: 'desc' },
-    });
-  }
-
-  async findOne(id: number) {
-    const supplier = await this.prisma.supplier.findUnique({
-      where: { id },
-      include: {
-        purchases: {
-          orderBy: { createdAt: 'desc' },
-        },
-      },
-    });
-
-    if (!supplier) {
-      throw new NotFoundException(`Supplier ${id} no existe`);
+  async create(dto: CreateSuplierDto): Promise<Supplier> {
+    try {
+      return await this.prisma.supplier.create({
+        data: dto,
+      });
+    } catch (error) {
+      console.error('Error creating supplier:', error);
+      throw new InternalServerErrorException('Error al crear el proveedor');
     }
-
-    return supplier;
   }
 
-  async update(id: number, dto: UpdateSuplierDto) {
-    await this.findOne(id); // valida existencia
+  async findAll(): Promise<Supplier[]> {
+    try {
+      const suppliers = await this.prisma.supplier.findMany({
+        orderBy: { createdAt: 'desc' },
+      });
 
-    return await this.prisma.supplier.update({
-      where: { id },
-      data: {
-        name: dto.name,
-        companyName: dto.companyName,
-        contactName: dto.contactName,
-        phone: dto.phone,
-        email: dto.email,
-        address: dto.address,
-      },
-    });
+      if (!suppliers || suppliers.length === 0) {
+        throw new NotFoundException('No existen proveedores registrados');
+      }
+
+      return suppliers;
+    } catch (error) {
+      console.error('Error fetching suppliers:', error);
+      throw error instanceof NotFoundException
+        ? error
+        : new InternalServerErrorException('Error al obtener los proveedores');
+    }
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async findOne(id: number): Promise<Supplier> {
+    try {
+      const supplier = await this.prisma.supplier.findUnique({
+        where: { id },
+        include: {
+          purchases: {
+            orderBy: { createdAt: 'desc' },
+          },
+        },
+      });
 
-    return await this.prisma.supplier.delete({
-      where: { id },
-    });
+      if (!supplier) {
+        throw new NotFoundException(`Proveedor con ID ${id} no encontrado`);
+      }
+
+      return supplier;
+    } catch (error) {
+      console.error('Error finding supplier:', error);
+      throw error instanceof NotFoundException
+        ? error
+        : new InternalServerErrorException('Error al buscar el proveedor');
+    }
+  }
+
+  async update(id: number, dto: UpdateSuplierDto): Promise<Supplier> {
+    try {
+      const supplierExists = await this.prisma.supplier.findUnique({
+        where: { id },
+      });
+
+      if (!supplierExists) {
+        throw new NotFoundException(`Proveedor con ID ${id} no encontrado`);
+      }
+
+      return await this.prisma.supplier.update({
+        where: { id },
+        data: dto,
+      });
+    } catch (error) {
+      console.error('Error updating supplier:', error);
+      throw error instanceof NotFoundException
+        ? error
+        : new InternalServerErrorException('Error al actualizar el proveedor');
+    }
+  }
+
+  async remove(id: number): Promise<{ message: string }> {
+    try {
+      const supplierExists = await this.prisma.supplier.findUnique({
+        where: { id },
+      });
+
+      if (!supplierExists) {
+        throw new NotFoundException(`Proveedor con ID ${id} no encontrado`);
+      }
+
+      await this.prisma.supplier.delete({
+        where: { id },
+      });
+
+      return {
+        message: `Proveedor con ID ${id} eliminado correctamente`,
+      };
+    } catch (error) {
+      console.error('Error deleting supplier:', error);
+      throw error instanceof NotFoundException
+        ? error
+        : new InternalServerErrorException('Error al eliminar el proveedor');
+    }
   }
 }
