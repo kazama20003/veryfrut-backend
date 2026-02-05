@@ -306,12 +306,22 @@ export class SupliersService {
       const exists = await this.prisma.purchase.findUnique({
         where: { id: purchaseId },
       });
-      if (!exists)
+
+      if (!exists) {
         throw new NotFoundException(
           `Compra con ID ${purchaseId} no encontrada`,
         );
+      }
 
-      await this.prisma.purchase.delete({ where: { id: purchaseId } });
+      await this.prisma.$transaction([
+        this.prisma.purchaseItem.deleteMany({
+          where: { purchaseId },
+        }),
+        this.prisma.purchase.delete({
+          where: { id: purchaseId },
+        }),
+      ]);
+
       return { message: `Compra con ID ${purchaseId} eliminada correctamente` };
     } catch (error) {
       console.error('Error deleting purchase:', error);
