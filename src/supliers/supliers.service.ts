@@ -1,44 +1,55 @@
+// src/supliers/supliers.service.ts
 import {
   Injectable,
   NotFoundException,
   InternalServerErrorException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { PaginationService } from 'src/common/pagination/pagination.service';
 import { CreateSuplierDto } from './dto/create-suplier.dto';
 import { UpdateSuplierDto } from './dto/update-suplier.dto';
 import { Supplier } from '@prisma/client';
+import { PaginationQueryDto } from 'src/common/pagination/pagination.dto';
+import { PaginatedResponse } from 'src/common/pagination/paginated-response';
 
 @Injectable()
 export class SupliersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly paginationService: PaginationService,
+  ) {}
 
   async create(dto: CreateSuplierDto): Promise<Supplier> {
     try {
-      return await this.prisma.supplier.create({
-        data: dto,
-      });
+      return await this.prisma.supplier.create({ data: dto });
     } catch (error) {
       console.error('Error creating supplier:', error);
       throw new InternalServerErrorException('Error al crear el proveedor');
     }
   }
 
-  async findAll(): Promise<Supplier[]> {
+  // --- Find all con paginación ---
+  async findAll(
+    query: PaginationQueryDto,
+  ): Promise<PaginatedResponse<Supplier>> {
     try {
-      const suppliers = await this.prisma.supplier.findMany({
-        orderBy: { createdAt: 'desc' },
+      const { page = 1, limit = 10, sortBy, order = 'desc' } = query;
+
+      const orderBy = this.paginationService.buildOrderBy(sortBy, order);
+
+      return this.paginationService.paginate(this.prisma.supplier, {
+        page,
+        limit,
+        findManyArgs: {
+          orderBy: orderBy || { createdAt: 'desc' },
+        },
+        countArgs: {},
       });
-
-      if (!suppliers || suppliers.length === 0) {
-        throw new NotFoundException('No existen proveedores registrados');
-      }
-
-      return suppliers;
     } catch (error) {
       console.error('Error fetching suppliers:', error);
-      throw error instanceof NotFoundException
-        ? error
-        : new InternalServerErrorException('Error al obtener los proveedores');
+      throw new InternalServerErrorException(
+        'Error al obtener los proveedores',
+      );
     }
   }
 
@@ -98,13 +109,9 @@ export class SupliersService {
         throw new NotFoundException(`Proveedor con ID ${id} no encontrado`);
       }
 
-      await this.prisma.supplier.delete({
-        where: { id },
-      });
+      await this.prisma.supplier.delete({ where: { id } });
 
-      return {
-        message: `Proveedor con ID ${id} eliminado correctamente`,
-      };
+      return { message: `Proveedor con ID ${id} eliminado correctamente` };
     } catch (error) {
       console.error('Error deleting supplier:', error);
       throw error instanceof NotFoundException

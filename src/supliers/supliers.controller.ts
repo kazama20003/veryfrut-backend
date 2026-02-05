@@ -7,10 +7,14 @@ import {
   Param,
   Delete,
   ParseIntPipe,
+  Query,
 } from '@nestjs/common';
 import { SupliersService } from './supliers.service';
 import { CreateSuplierDto } from './dto/create-suplier.dto';
 import { UpdateSuplierDto } from './dto/update-suplier.dto';
+import { PaginationQueryDto } from 'src/common/pagination/pagination.dto';
+import { PaginatedResponse } from 'src/common/pagination/paginated-response';
+import { Supplier } from '@prisma/client';
 
 @Controller('supliers')
 export class SupliersController {
@@ -22,8 +26,10 @@ export class SupliersController {
   }
 
   @Get()
-  findAll() {
-    return this.supliersService.findAll();
+  findAll(
+    @Query() query: PaginationQueryDto, // <-- recibimos page, limit, sortBy, order
+  ): Promise<PaginatedResponse<Supplier>> {
+    return this.supliersService.findAll(query);
   }
 
   @Get(':id')
