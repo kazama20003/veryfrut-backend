@@ -138,11 +138,34 @@ export class SupliersService {
 
   async remove(id: number): Promise<{ message: string }> {
     try {
-      const exists = await this.prisma.supplier.findUnique({ where: { id } });
-      if (!exists)
-        throw new NotFoundException(`Proveedor con ID ${id} no encontrado`);
+      const supplier = await this.prisma.supplier.findUnique({
+        where: { id },
+        select: { id: true },
+      });
 
-      await this.prisma.supplier.delete({ where: { id } });
+      if (!supplier) {
+        throw new NotFoundException(`Proveedor con ID ${id} no encontrado`);
+      }
+
+      await this.prisma.$transaction(async (tx) => {
+        // 1) Borrar items de compras del proveedor (vía relación purchase -> supplierId)
+        await tx.purchaseItem.deleteMany({
+          where: {
+            purchase: { supplierId: id },
+          },
+        });
+
+        // 2) Borrar compras del proveedor
+        await tx.purchase.deleteMany({
+          where: { supplierId: id },
+        });
+
+        // 3) Borrar proveedor
+        await tx.supplier.delete({
+          where: { id },
+        });
+      });
+
       return { message: `Proveedor con ID ${id} eliminado correctamente` };
     } catch (error) {
       console.error('Error deleting supplier:', error);
