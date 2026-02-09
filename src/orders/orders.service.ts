@@ -241,14 +241,10 @@ export class OrdersService {
   async checkExistingOrder(query: CheckOrderDto): Promise<{ exists: boolean }> {
     const { areaId, date } = query;
 
-    if (!areaId) {
+    if (!areaId)
       throw new BadRequestException('El parámetro "areaId" es obligatorio.');
-    }
-
-    if (!date) {
+    if (!date)
       throw new BadRequestException('El parámetro "date" es obligatorio.');
-    }
-
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       throw new BadRequestException(
         'Fecha inválida. Formato esperado: YYYY-MM-DD',
@@ -257,20 +253,27 @@ export class OrdersService {
 
     const tz = 'America/Lima';
 
-    const startUtc = zonedTimeToUtc(`${date} 00:00:00`, tz);
-    const endUtc = zonedTimeToUtc(`${date} 23:59:59.999`, tz);
+    // ✅ rango del día "date" en Lima convertido a UTC
+    const startUtc = zonedTimeToUtc(`${date}T00:00:00.000`, tz);
+
+    // ✅ inicio del día siguiente (Lima) convertido a UTC (límite exclusivo)
+    const nextDay = new Date(`${date}T00:00:00.000Z`);
+    nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+    const nextDateStr = nextDay.toISOString().slice(0, 10); // YYYY-MM-DD
+    const endUtcExclusive = zonedTimeToUtc(`${nextDateStr}T00:00:00.000`, tz);
 
     const exists = await this.prisma.order.findFirst({
       where: {
         areaId: Number(areaId),
         createdAt: {
           gte: startUtc,
-          lte: endUtc,
+          lt: endUtcExclusive,
         },
       },
+      select: { id: true }, // opcional: más rápido
     });
 
-    return { exists: Boolean(exists) };
+    return { exists: !!exists };
   }
 
   // ---------------------------------------------------------------------------
