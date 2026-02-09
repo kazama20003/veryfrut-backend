@@ -256,22 +256,24 @@ export class OrdersService {
       throw new BadRequestException('El parámetro "areaId" debe ser numérico.');
     }
 
-    // ✅ Query por "día Perú" en SQL (sin depender de UTC en Node)
-    const rows = await this.prisma.$queryRaw<{ id: number }[]>`
-      SELECT o.id
-      FROM "Order" o
-      WHERE o."areaId" = ${areaIdNum}
-        AND (
-          (
-            o."createdAt" AT TIME ZONE 'UTC'
-          ) AT TIME ZONE 'America/Lima'
-        )::date = ${date}::date
-      LIMIT 1;
-    `;
+    const tz = 'America/Lima';
+    const startUtc = zonedTimeToUtc(`${date} 00:00:00`, tz);
+    const nextDayUtc = zonedTimeToUtc(`${date} 00:00:00`, tz);
+    nextDayUtc.setUTCDate(nextDayUtc.getUTCDate() + 1);
 
-    return { exists: rows.length > 0 };
+    const existingOrder = await this.prisma.order.findFirst({
+      where: {
+        areaId: areaIdNum,
+        createdAt: {
+          gte: startUtc,
+          lt: nextDayUtc,
+        },
+      },
+      select: { id: true },
+    });
+
+    return { exists: !!existingOrder };
   }
-
   // ---------------------------------------------------------------------------
   // FILTER BY DATE RANGE
   // ---------------------------------------------------------------------------
