@@ -251,29 +251,25 @@ export class OrdersService {
       );
     }
 
-    const tz = 'America/Lima';
+    const areaIdNum = Number(areaId);
+    if (!Number.isFinite(areaIdNum)) {
+      throw new BadRequestException('El parámetro "areaId" debe ser numérico.');
+    }
 
-    // ✅ rango del día "date" en Lima convertido a UTC
-    const startUtc = zonedTimeToUtc(`${date}T00:00:00.000`, tz);
+    // ✅ Query por "día Perú" en SQL (sin depender de UTC en Node)
+    const rows = await this.prisma.$queryRaw<{ id: number }[]>`
+      SELECT o.id
+      FROM "Order" o
+      WHERE o."areaId" = ${areaIdNum}
+        AND (
+          (
+            o."createdAt" AT TIME ZONE 'UTC'
+          ) AT TIME ZONE 'America/Lima'
+        )::date = ${date}::date
+      LIMIT 1;
+    `;
 
-    // ✅ inicio del día siguiente (Lima) convertido a UTC (límite exclusivo)
-    const nextDay = new Date(`${date}T00:00:00.000Z`);
-    nextDay.setUTCDate(nextDay.getUTCDate() + 1);
-    const nextDateStr = nextDay.toISOString().slice(0, 10); // YYYY-MM-DD
-    const endUtcExclusive = zonedTimeToUtc(`${nextDateStr}T00:00:00.000`, tz);
-
-    const exists = await this.prisma.order.findFirst({
-      where: {
-        areaId: Number(areaId),
-        createdAt: {
-          gte: startUtc,
-          lt: endUtcExclusive,
-        },
-      },
-      select: { id: true }, // opcional: más rápido
-    });
-
-    return { exists: !!exists };
+    return { exists: rows.length > 0 };
   }
 
   // ---------------------------------------------------------------------------
