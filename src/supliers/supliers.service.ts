@@ -13,6 +13,7 @@ import { Supplier, Purchase, Prisma } from '@prisma/client';
 import { PaginationQueryDto } from 'src/common/pagination/pagination.dto';
 import { PaginatedResponse } from 'src/common/pagination/paginated-response';
 import { zonedTimeToUtc } from 'date-fns-tz';
+import { UpdatePurchaseItemDto } from './dto/update-purchase-item.dto';
 
 const TZ = 'America/Lima';
 
@@ -387,6 +388,97 @@ export class SupliersService {
     } catch (error) {
       console.error('Error deleting purchase:', error);
       throw new InternalServerErrorException('Error al eliminar la compra');
+    }
+  }
+  async updatePurchaseItem(itemId: number, dto: UpdatePurchaseItemDto) {
+    try {
+      const item = await this.prisma.purchaseItem.findUnique({
+        where: { id: itemId },
+        select: {
+          id: true,
+          purchaseId: true,
+          quantity: true,
+          unitCost: true,
+        },
+      });
+
+      if (!item)
+        throw new NotFoundException(`Item con ID ${itemId} no encontrado`);
+
+      const newQuantity = dto.quantity ?? item.quantity;
+      const newUnitCost = dto.unitCost ?? item.unitCost;
+      const newTotalCost = newQuantity * newUnitCost;
+
+      return await this.prisma.$transaction(async (tx) => {
+        // 1) actualiza el item
+        const updatedItem = await tx.purchaseItem.update({
+          where: { id: itemId },
+          data: {
+            ...dto,
+            totalCost: newTotalCost,
+          },
+        });
+
+        // 2) recalcula totalAmount de la compra sumando totalCost de items
+        const agg = await tx.purchaseItem.aggregate({
+          where: { purchaseId: item.purchaseId },
+          _sum: { totalCost: true },
+        });
+
+        const newTotalAmount = agg._sum.totalCost ?? 0;
+
+        await tx.purchase.update({
+          where: { id: item.purchaseId },
+          data: { totalAmount: newTotalAmount },
+        });
+
+        return updatedItem;
+      });
+    } catch (error) {
+      console.error('Error updating purchase item:', error);
+      throw error instanceof NotFoundException
+        ? error
+        : new InternalServerErrorException(
+            'Error al actualizar el item de compra',
+          );
+    }
+  }
+  async removePurchaseItem(itemId: number) {
+    try {
+      const item = await this.prisma.purchaseItem.findUnique({
+        where: { id: itemId },
+        select: { id: true, purchaseId: true },
+      });
+
+      if (!item)
+        throw new NotFoundException(`Item con ID ${itemId} no encontrado`);
+
+      return await this.prisma.$transaction(async (tx) => {
+        // 1) borra el item
+        await tx.purchaseItem.delete({ where: { id: itemId } });
+
+        // 2) recalcula el totalAmount
+        const agg = await tx.purchaseItem.aggregate({
+          where: { purchaseId: item.purchaseId },
+          _sum: { totalCost: true },
+        });
+
+        const newTotalAmount = agg._sum.totalCost ?? 0;
+
+        await tx.purchase.update({
+          where: { id: item.purchaseId },
+          data: { totalAmount: newTotalAmount },
+        });
+
+        return { message: `Item con ID ${itemId} eliminado correctamente` };
+      });
+    } catch (error) {
+      console.error('Error deleting purchase item:', error);
+      throw error instanceof NotFoundException
+        ? error
+        : new InternalServerErrorException(
+            'Error al eliminar el item de compra',
+          );
     }
   }
 }

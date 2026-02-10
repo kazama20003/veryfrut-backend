@@ -17,7 +17,7 @@ import { UpdatePurchaseDto } from './dto/update-purchase.dto';
 import { PaginationQueryDto } from 'src/common/pagination/pagination.dto';
 import { PaginatedResponse } from 'src/common/pagination/paginated-response';
 import { Supplier, Purchase } from '@prisma/client';
-
+import { UpdatePurchaseItemDto } from './dto/update-purchase-item.dto';
 @Controller('supliers')
 export class SupliersController {
   constructor(private readonly supliersService: SupliersService) {}
@@ -78,6 +78,14 @@ export class SupliersController {
     return this.supliersService.findPurchaseById(purchaseId);
   }
 
+  @Patch('purchases/items/:itemId')
+  updatePurchaseItem(
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @Body() dto: UpdatePurchaseItemDto,
+  ) {
+    return this.supliersService.updatePurchaseItem(itemId, dto);
+  }
+
   @Patch('purchases/:purchaseId')
   updatePurchase(
     @Param('purchaseId', ParseIntPipe) purchaseId: number,
@@ -91,5 +99,9 @@ export class SupliersController {
     @Param('purchaseId', ParseIntPipe) purchaseId: number,
   ): Promise<{ message: string }> {
     return this.supliersService.removePurchase(purchaseId);
+  }
+  @Delete('purchases/items/:itemId')
+  removePurchaseItem(@Param('itemId', ParseIntPipe) itemId: number) {
+    return this.supliersService.removePurchaseItem(itemId);
   }
 }
