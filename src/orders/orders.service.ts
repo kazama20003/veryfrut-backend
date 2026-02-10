@@ -11,7 +11,7 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { CheckOrderDto } from './dto/check-order.dto';
 import { Prisma } from '@prisma/client';
-import { utcToZonedTime, zonedTimeToUtc } from 'date-fns-tz';
+import { formatInTimeZone, utcToZonedTime, zonedTimeToUtc } from 'date-fns-tz';
 
 // Reusable include para todas las queries — incluye category en product y company en area
 const fullOrderInclude = {
@@ -52,10 +52,30 @@ type OrderWithRelations = Prisma.OrderGetPayload<{
 
 @Injectable()
 export class OrdersService {
+  private readonly peruTz = 'America/Lima';
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly pagination: PaginationService,
   ) {}
+
+  private normalizeToPeruDate(dateInput: string): string {
+    const value = dateInput.trim();
+    const plainDateRegex = /^\d{4}-\d{2}-\d{2}$/;
+
+    if (plainDateRegex.test(value)) {
+      return value;
+    }
+
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException(
+        'Fecha invalida. Usa YYYY-MM-DD o una fecha ISO valida.',
+      );
+    }
+
+    return formatInTimeZone(parsed, this.peruTz, 'yyyy-MM-dd');
+  }
 
   // ---------------------------------------------------------------------------
   // CREATE
@@ -242,31 +262,25 @@ export class OrdersService {
     const { areaId, date } = query;
 
     if (!areaId)
-      throw new BadRequestException('El parámetro "areaId" es obligatorio.');
+      throw new BadRequestException('El parametro "areaId" es obligatorio.');
     if (!date)
-      throw new BadRequestException('El parámetro "date" es obligatorio.');
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      throw new BadRequestException(
-        'Fecha inválida. Formato esperado: YYYY-MM-DD',
-      );
-    }
+      throw new BadRequestException('El parametro "date" es obligatorio.');
 
     const areaIdNum = Number(areaId);
-    if (!Number.isFinite(areaIdNum)) {
-      throw new BadRequestException('El parámetro "areaId" debe ser numérico.');
+    if (!Number.isInteger(areaIdNum) || areaIdNum <= 0) {
+      throw new BadRequestException('El parametro "areaId" debe ser numerico.');
     }
 
-    const tz = 'America/Lima';
-    const startUtc = zonedTimeToUtc(`${date} 00:00:00`, tz);
-    const nextDayUtc = zonedTimeToUtc(`${date} 00:00:00`, tz);
-    nextDayUtc.setUTCDate(nextDayUtc.getUTCDate() + 1);
+    const peruDate = this.normalizeToPeruDate(date);
+    const startUtc = zonedTimeToUtc(`${peruDate}T00:00:00`, this.peruTz);
+    const endUtc = zonedTimeToUtc(`${peruDate}T23:59:59.999`, this.peruTz);
 
     const existingOrder = await this.prisma.order.findFirst({
       where: {
         areaId: areaIdNum,
         createdAt: {
           gte: startUtc,
-          lt: nextDayUtc,
+          lte: endUtc,
         },
       },
       select: { id: true },
