@@ -77,6 +77,34 @@ export class OrdersService {
     return formatInTimeZone(parsed, this.peruTz, 'yyyy-MM-dd');
   }
 
+  private shiftIsoDate(isoDate: string, days: number): string {
+    const [year, month, day] = isoDate.split('-').map(Number);
+    const dateUtc = new Date(Date.UTC(year, month - 1, day));
+    dateUtc.setUTCDate(dateUtc.getUTCDate() + days);
+    return dateUtc.toISOString().slice(0, 10);
+  }
+
+  private async existsOrderInPeruDate(
+    areaId: number,
+    peruDate: string,
+  ): Promise<boolean> {
+    const startUtc = zonedTimeToUtc(`${peruDate}T00:00:00`, this.peruTz);
+    const endUtc = zonedTimeToUtc(`${peruDate}T23:59:59.999`, this.peruTz);
+
+    const existingOrder = await this.prisma.order.findFirst({
+      where: {
+        areaId,
+        createdAt: {
+          gte: startUtc,
+          lte: endUtc,
+        },
+      },
+      select: { id: true },
+    });
+
+    return !!existingOrder;
+  }
+
   // ---------------------------------------------------------------------------
   // CREATE
   // ---------------------------------------------------------------------------
@@ -271,22 +299,20 @@ export class OrdersService {
       throw new BadRequestException('El parametro "areaId" debe ser numerico.');
     }
 
-    const peruDate = this.normalizeToPeruDate(date);
-    const startUtc = zonedTimeToUtc(`${peruDate}T00:00:00`, this.peruTz);
-    const endUtc = zonedTimeToUtc(`${peruDate}T23:59:59.999`, this.peruTz);
+    const rawDate = date.trim();
+    const isPlainDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate);
+    const peruDate = this.normalizeToPeruDate(rawDate);
 
-    const existingOrder = await this.prisma.order.findFirst({
-      where: {
-        areaId: areaIdNum,
-        createdAt: {
-          gte: startUtc,
-          lte: endUtc,
-        },
-      },
-      select: { id: true },
-    });
+    let exists = await this.existsOrderInPeruDate(areaIdNum, peruDate);
 
-    return { exists: !!existingOrder };
+    // Compatibilidad con frontend que usa toISOString().split('T')[0]:
+    // en Peru, desde las 19:00 puede enviar el dia siguiente por UTC.
+    if (!exists && isPlainDate) {
+      const previousPeruDate = this.shiftIsoDate(peruDate, -1);
+      exists = await this.existsOrderInPeruDate(areaIdNum, previousPeruDate);
+    }
+
+    return { exists };
   }
   // ---------------------------------------------------------------------------
   // FILTER BY DATE RANGE
