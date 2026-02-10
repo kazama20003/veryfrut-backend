@@ -9,9 +9,28 @@ import { CreateSuplierDto } from './dto/create-suplier.dto';
 import { UpdateSuplierDto } from './dto/update-suplier.dto';
 import { CreatePurchaseDto } from './dto/create-purchase.dto';
 import { UpdatePurchaseDto } from './dto/update-purchase.dto';
-import { Supplier, Purchase } from '@prisma/client';
+import { Supplier, Purchase, Prisma } from '@prisma/client';
 import { PaginationQueryDto } from 'src/common/pagination/pagination.dto';
 import { PaginatedResponse } from 'src/common/pagination/paginated-response';
+import { zonedTimeToUtc } from 'date-fns-tz';
+
+const TZ = 'America/Lima';
+
+function parseDateToUtc(input?: string): Date | undefined {
+  if (!input) return undefined;
+
+  // "YYYY-MM-DD" => 00:00 en Lima convertido a UTC (evita desfase)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(input)) {
+    return zonedTimeToUtc(`${input}T00:00:00.000`, TZ);
+  }
+
+  // ISO completo
+  const d = new Date(input);
+  if (isNaN(d.getTime())) {
+    throw new Error(`Fecha inválida: ${input}`);
+  }
+  return d;
+}
 
 @Injectable()
 export class SupliersService {
@@ -45,7 +64,8 @@ export class SupliersService {
           orderBy: orderBy || { createdAt: 'desc' },
           include: {
             purchases: {
-              orderBy: { createdAt: 'desc' },
+              // 👇 si quieres ordenar por fecha real de compra:
+              orderBy: { purchaseDate: 'desc' },
               include: {
                 purchaseItems: {
                   select: {
@@ -85,7 +105,7 @@ export class SupliersService {
         where: { id },
         include: {
           purchases: {
-            orderBy: { createdAt: 'desc' },
+            orderBy: { purchaseDate: 'desc' },
             include: {
               purchaseItems: {
                 select: {
@@ -148,19 +168,14 @@ export class SupliersService {
       }
 
       await this.prisma.$transaction(async (tx) => {
-        // 1) Borrar items de compras del proveedor (vía relación purchase -> supplierId)
         await tx.purchaseItem.deleteMany({
-          where: {
-            purchase: { supplierId: id },
-          },
+          where: { purchase: { supplierId: id } },
         });
 
-        // 2) Borrar compras del proveedor
         await tx.purchase.deleteMany({
           where: { supplierId: id },
         });
 
-        // 3) Borrar proveedor
         await tx.supplier.delete({
           where: { id },
         });
@@ -195,6 +210,8 @@ export class SupliersService {
         totalCost: item.unitCost * item.quantity,
       }));
 
+      const purchaseDate = parseDateToUtc(dto.purchaseDate);
+
       return await this.prisma.purchase.create({
         data: {
           supplierId,
@@ -202,6 +219,10 @@ export class SupliersService {
           totalAmount: dto.totalAmount,
           status: 'created',
           paid: false,
+
+          // ✅ guarda la fecha enviada (si no viene, usa default del schema)
+          ...(purchaseDate ? { purchaseDate } : {}),
+
           purchaseItems: { create: itemsData },
         },
         include: {
@@ -236,7 +257,7 @@ export class SupliersService {
     try {
       return await this.prisma.purchase.findMany({
         where: { supplierId },
-        orderBy: { createdAt: 'desc' },
+        orderBy: { purchaseDate: 'desc' },
         include: {
           purchaseItems: {
             select: {
@@ -308,15 +329,31 @@ export class SupliersService {
     try {
       const exists = await this.prisma.purchase.findUnique({
         where: { id: purchaseId },
+        select: { id: true },
       });
       if (!exists)
         throw new NotFoundException(
           `Compra con ID ${purchaseId} no encontrada`,
         );
 
+      const data: Prisma.PurchaseUpdateInput = {};
+
+      if (dto.status !== undefined) data.status = dto.status;
+      if (dto.paid !== undefined) data.paid = dto.paid;
+      if (dto.observation !== undefined) data.observation = dto.observation;
+
+      if (dto.paymentDate !== undefined) {
+        // si envías string válido => Date; si quieres permitir null explícito, dímelo
+        data.paymentDate = parseDateToUtc(dto.paymentDate);
+      }
+
+      if (dto.purchaseDate !== undefined) {
+        data.purchaseDate = parseDateToUtc(dto.purchaseDate);
+      }
+
       return await this.prisma.purchase.update({
         where: { id: purchaseId },
-        data: dto,
+        data,
       });
     } catch (error) {
       console.error('Error updating purchase:', error);
@@ -328,6 +365,7 @@ export class SupliersService {
     try {
       const exists = await this.prisma.purchase.findUnique({
         where: { id: purchaseId },
+        select: { id: true },
       });
 
       if (!exists) {
