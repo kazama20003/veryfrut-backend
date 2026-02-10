@@ -5,10 +5,10 @@ import {
   ValidateNested,
   ArrayMinSize,
   IsPositive,
+  IsDateString,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { CreatePurchaseItemDto } from './create-purchase-item.dto';
-
 export class CreatePurchaseDto {
   @IsOptional()
   @IsInt()
@@ -17,6 +17,10 @@ export class CreatePurchaseDto {
   @IsNumber()
   @IsPositive()
   totalAmount: number;
+
+  @IsOptional()
+  @IsDateString()
+  purchaseDate?: string; // 👈 fecha enviada por el front (ISO o YYYY-MM-DD)
 
   @ValidateNested({ each: true })
   @Type(() => CreatePurchaseItemDto)

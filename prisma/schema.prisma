@@ -146,7 +146,7 @@ model Purchase {
   observation String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
-
+  purchaseDate DateTime @default(now())
   supplier      Supplier       @relation(fields: [supplierId], references: [id])
   purchaseItems PurchaseItem[]
   area          Area?          @relation(fields: [areaId], references: [id])

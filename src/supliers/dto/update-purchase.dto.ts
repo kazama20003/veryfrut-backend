@@ -1,4 +1,10 @@
-import { IsBoolean, IsDate, IsOptional, IsString, IsIn } from 'class-validator';
+import {
+  IsBoolean,
+  IsDateString,
+  IsOptional,
+  IsString,
+  IsIn,
+} from 'class-validator';
 
 export class UpdatePurchaseDto {
   @IsOptional()
@@ -10,8 +16,12 @@ export class UpdatePurchaseDto {
   paid?: boolean;
 
   @IsOptional()
-  @IsDate()
-  paymentDate?: Date;
+  @IsDateString()
+  paymentDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  purchaseDate?: string;
 
   @IsOptional()
   @IsString()
