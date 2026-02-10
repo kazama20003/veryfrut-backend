@@ -77,13 +77,6 @@ export class OrdersService {
     return formatInTimeZone(parsed, this.peruTz, 'yyyy-MM-dd');
   }
 
-  private shiftIsoDate(isoDate: string, days: number): string {
-    const [year, month, day] = isoDate.split('-').map(Number);
-    const dateUtc = new Date(Date.UTC(year, month - 1, day));
-    dateUtc.setUTCDate(dateUtc.getUTCDate() + days);
-    return dateUtc.toISOString().slice(0, 10);
-  }
-
   private async existsOrderInPeruDate(
     areaId: number,
     peruDate: string,
@@ -288,6 +281,11 @@ export class OrdersService {
   // ---------------------------------------------------------------------------
   async checkExistingOrder(query: CheckOrderDto): Promise<{ exists: boolean }> {
     const { areaId, date } = query;
+    const wrongAreaIdParam = (query as CheckOrderDto & { eaId?: string }).eaId;
+
+    if (!areaId && wrongAreaIdParam) {
+      throw new BadRequestException('Parametro invalido "eaId". Usa "areaId".');
+    }
 
     if (!areaId)
       throw new BadRequestException('El parametro "areaId" es obligatorio.');
@@ -299,19 +297,8 @@ export class OrdersService {
       throw new BadRequestException('El parametro "areaId" debe ser numerico.');
     }
 
-    const rawDate = date.trim();
-    const isPlainDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate);
-    const peruDate = this.normalizeToPeruDate(rawDate);
-
-    let exists = await this.existsOrderInPeruDate(areaIdNum, peruDate);
-
-    // Compatibilidad con frontend que usa toISOString().split('T')[0]:
-    // en Peru, desde las 19:00 puede enviar el dia siguiente por UTC.
-    if (!exists && isPlainDate) {
-      const previousPeruDate = this.shiftIsoDate(peruDate, -1);
-      exists = await this.existsOrderInPeruDate(areaIdNum, previousPeruDate);
-    }
-
+    const peruDate = this.normalizeToPeruDate(date.trim());
+    const exists = await this.existsOrderInPeruDate(areaIdNum, peruDate);
     return { exists };
   }
   // ---------------------------------------------------------------------------
