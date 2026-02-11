@@ -97,8 +97,9 @@ model Order {
   totalAmount Float
   status      String // Ej: "created", "delivered", etc.
   observation String? // <- Campo agregado
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt      @db.Timestamptz(3)
+
 
   area       Area        @relation(fields: [areaId], references: [id]) // La orden pertenece a un área
   orderItems OrderItem[] // Un pedido puede tener varios productos
