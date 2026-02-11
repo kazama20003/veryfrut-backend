@@ -11,7 +11,7 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { CheckOrderDto } from './dto/check-order.dto';
 import { Prisma } from '@prisma/client';
-import { formatInTimeZone, utcToZonedTime, zonedTimeToUtc } from 'date-fns-tz';
+import { formatInTimeZone, zonedTimeToUtc } from 'date-fns-tz';
 
 // Reusable include para todas las queries — incluye category en product y company en area
 const fullOrderInclude = {
@@ -50,6 +50,18 @@ type OrderWithRelations = Prisma.OrderGetPayload<{
   include: typeof fullOrderInclude;
 }>;
 
+type PeruDateFields = {
+  createdAtPeruDate: string; // yyyy-MM-dd
+  createdAtPeruTime: string; // HH:mm:ss
+  createdAtPeru: string; // yyyy-MM-dd HH:mm:ss
+  updatedAtPeru?: string; // yyyy-MM-dd HH:mm:ss
+};
+
+type OrderWithPeru = OrderWithRelations & PeruDateFields;
+
+type WithItems<T> = { items: T[] };
+type WithData<T> = { data: T[] };
+
 @Injectable()
 export class OrdersService {
   private readonly peruTz = 'America/Lima';
@@ -59,13 +71,15 @@ export class OrdersService {
     private readonly pagination: PaginationService,
   ) {}
 
+  // ---------------------------------------------------------------------------
+  // HELPERS
+  // ---------------------------------------------------------------------------
+
   private normalizeToPeruDate(dateInput: string): string {
     const value = dateInput.trim();
     const plainDateRegex = /^\d{4}-\d{2}-\d{2}$/;
 
-    if (plainDateRegex.test(value)) {
-      return value;
-    }
+    if (plainDateRegex.test(value)) return value;
 
     const parsed = new Date(value);
     if (Number.isNaN(parsed.getTime())) {
@@ -77,19 +91,110 @@ export class OrdersService {
     return formatInTimeZone(parsed, this.peruTz, 'yyyy-MM-dd');
   }
 
+  private getPeruDayRangeUtc(peruDate: string): {
+    startUtc: Date;
+    nextDayUtc: Date;
+  } {
+    // rango: [00:00 Perú, 00:00 del día siguiente Perú)
+    const startUtc = zonedTimeToUtc(`${peruDate}T00:00:00.000`, this.peruTz);
+    const nextDayUtc = new Date(startUtc);
+    nextDayUtc.setUTCDate(nextDayUtc.getUTCDate() + 1);
+    return { startUtc, nextDayUtc };
+  }
+
+  private addPeruFields(order: OrderWithRelations): OrderWithPeru {
+    // ✅ sin type assertion innecesaria (arregla no-unnecessary-type-assertion)
+    const createdAtPeruDate = formatInTimeZone(
+      order.createdAt,
+      this.peruTz,
+      'yyyy-MM-dd',
+    );
+    const createdAtPeruTime = formatInTimeZone(
+      order.createdAt,
+      this.peruTz,
+      'HH:mm:ss',
+    );
+    const createdAtPeru = formatInTimeZone(
+      order.createdAt,
+      this.peruTz,
+      'yyyy-MM-dd HH:mm:ss',
+    );
+
+    const base: OrderWithPeru = {
+      ...order,
+      createdAtPeruDate,
+      createdAtPeruTime,
+      createdAtPeru,
+    };
+
+    if (order.updatedAt) {
+      base.updatedAtPeru = formatInTimeZone(
+        order.updatedAt,
+        this.peruTz,
+        'yyyy-MM-dd HH:mm:ss',
+      );
+    }
+
+    return base;
+  }
+
+  // ✅ Type-guards sin any (arregla no-unsafe-*)
+  private hasItems<T>(
+    res: unknown,
+  ): res is PaginatedResponse<T> & WithItems<T> {
+    if (typeof res !== 'object' || res === null) return false;
+    const r = res as Record<string, unknown>;
+    return Array.isArray(r.items);
+  }
+
+  private hasData<T>(res: unknown): res is PaginatedResponse<T> & WithData<T> {
+    if (typeof res !== 'object' || res === null) return false;
+    const r = res as Record<string, unknown>;
+    return Array.isArray(r.data);
+  }
+
+  private mapPaginatedOrders(
+    res: PaginatedResponse<OrderWithRelations>,
+  ): PaginatedResponse<OrderWithPeru> {
+    // Si tu PaginatedResponse trae "items"
+    if (this.hasItems<OrderWithRelations>(res)) {
+      const mappedItems = res.items.map((o) => this.addPeruFields(o));
+
+      // Mantén el resto de propiedades igual, solo reemplaza items
+      const base = res;
+      return {
+        ...(base as unknown as Omit<PaginatedResponse<OrderWithPeru>, 'items'>),
+        items: mappedItems,
+      } as PaginatedResponse<OrderWithPeru>;
+    }
+
+    // Si tu PaginatedResponse trae "data"
+    if (this.hasData<OrderWithRelations>(res)) {
+      const mappedData = res.data.map((o) => this.addPeruFields(o));
+
+      const base = res;
+      return {
+        ...(base as unknown as Omit<PaginatedResponse<OrderWithPeru>, 'data'>),
+        data: mappedData,
+      } as PaginatedResponse<OrderWithPeru>;
+    }
+
+    // Si tu PaginatedResponse usa otro nombre, devolvemos tal cual pero casteado
+    return res as unknown as PaginatedResponse<OrderWithPeru>;
+  }
+
   private async existsOrderInPeruDate(
     areaId: number,
     peruDate: string,
   ): Promise<boolean> {
-    const startUtc = zonedTimeToUtc(`${peruDate}T00:00:00`, this.peruTz);
-    const endUtc = zonedTimeToUtc(`${peruDate}T23:59:59.999`, this.peruTz);
+    const { startUtc, nextDayUtc } = this.getPeruDayRangeUtc(peruDate);
 
     const existingOrder = await this.prisma.order.findFirst({
       where: {
         areaId,
         createdAt: {
           gte: startUtc,
-          lte: endUtc,
+          lt: nextDayUtc, // ✅ fin exclusivo
         },
       },
       select: { id: true },
@@ -101,8 +206,8 @@ export class OrdersService {
   // ---------------------------------------------------------------------------
   // CREATE
   // ---------------------------------------------------------------------------
-  async create(dto: CreateOrderDto): Promise<OrderWithRelations> {
-    return this.prisma.order.create({
+  async create(dto: CreateOrderDto): Promise<OrderWithPeru> {
+    const created = await this.prisma.order.create({
       data: {
         userId: dto.userId,
         areaId: dto.areaId,
@@ -120,6 +225,8 @@ export class OrdersService {
       },
       include: fullOrderInclude,
     });
+
+    return this.addPeruFields(created);
   }
 
   // ---------------------------------------------------------------------------
@@ -127,7 +234,7 @@ export class OrdersService {
   // ---------------------------------------------------------------------------
   async findAll(
     query: PaginationQueryDto,
-  ): Promise<PaginatedResponse<OrderWithRelations>> {
+  ): Promise<PaginatedResponse<OrderWithPeru>> {
     const { page = 1, limit = 10, sortBy, order = 'desc', q } = query;
 
     const allowedSortFields = new Set<
@@ -172,7 +279,7 @@ export class OrdersService {
       count: (args: Prisma.OrderCountArgs) => this.prisma.order.count(args),
     };
 
-    return this.pagination.paginate<
+    const result = await this.pagination.paginate<
       OrderWithRelations,
       Prisma.OrderFindManyArgs,
       Prisma.OrderCountArgs
@@ -186,58 +293,51 @@ export class OrdersService {
       },
       countArgs: { where },
     });
+
+    return this.mapPaginatedOrders(result);
   }
 
   // ---------------------------------------------------------------------------
   // FIND ONE
   // ---------------------------------------------------------------------------
-  async findOne(id: number): Promise<OrderWithRelations> {
-    if (!id) {
-      throw new BadRequestException('El ID es obligatorio');
-    }
+  async findOne(id: number): Promise<OrderWithPeru> {
+    if (!id) throw new BadRequestException('El ID es obligatorio');
 
     const order = await this.prisma.order.findUnique({
       where: { id },
       include: fullOrderInclude,
     });
 
-    if (!order) {
-      throw new NotFoundException(`Orden con ID ${id} no encontrada`);
-    }
+    if (!order) throw new NotFoundException(`Orden con ID ${id} no encontrada`);
 
-    return order;
+    return this.addPeruFields(order);
   }
 
   // ---------------------------------------------------------------------------
-  // UPDATE (MISMO DÍA – HORA PERÚ)
+  // UPDATE (MISMO DÍA – HORA PERÚ) ✅ FIX
   // ---------------------------------------------------------------------------
-  async update(id: number, dto: UpdateOrderDto): Promise<OrderWithRelations> {
-    const existingOrder = await this.prisma.order.findUnique({
-      where: { id },
-    });
+  async update(id: number, dto: UpdateOrderDto): Promise<OrderWithPeru> {
+    const existingOrder = await this.prisma.order.findUnique({ where: { id } });
 
     if (!existingOrder) {
       throw new NotFoundException(`Orden con ID ${id} no encontrada`);
     }
 
-    const tz = 'America/Lima';
+    // ✅ comparar por FECHA Perú (string) para no depender del TZ del servidor
+    const createdPeruDate = formatInTimeZone(
+      existingOrder.createdAt,
+      this.peruTz,
+      'yyyy-MM-dd',
+    );
+    const nowPeruDate = formatInTimeZone(new Date(), this.peruTz, 'yyyy-MM-dd');
 
-    const createdAtPeru = utcToZonedTime(existingOrder.createdAt, tz);
-    const nowPeru = utcToZonedTime(new Date(), tz);
-
-    const startOfDay = new Date(createdAtPeru);
-    startOfDay.setHours(0, 0, 0, 0);
-
-    const endOfDay = new Date(startOfDay);
-    endOfDay.setDate(startOfDay.getDate() + 1);
-
-    if (nowPeru < startOfDay || nowPeru >= endOfDay) {
+    if (createdPeruDate !== nowPeruDate) {
       throw new BadRequestException(
         'La orden solo puede modificarse el mismo día de su creación (hora Perú).',
       );
     }
 
-    return this.prisma.order.update({
+    const updated = await this.prisma.order.update({
       where: { id },
       data: {
         totalAmount: dto.totalAmount,
@@ -257,6 +357,8 @@ export class OrdersService {
       },
       include: fullOrderInclude,
     });
+
+    return this.addPeruFields(updated);
   }
 
   // ---------------------------------------------------------------------------
@@ -265,11 +367,9 @@ export class OrdersService {
   async remove(id: number): Promise<void> {
     const exists = await this.prisma.order.findUnique({ where: { id } });
 
-    if (!exists) {
+    if (!exists)
       throw new NotFoundException(`Orden con ID ${id} no encontrada`);
-    }
 
-    // Transacción para asegurar consistencia
     await this.prisma.$transaction([
       this.prisma.orderItem.deleteMany({ where: { orderId: id } }),
       this.prisma.order.delete({ where: { id } }),
@@ -277,7 +377,7 @@ export class OrdersService {
   }
 
   // ---------------------------------------------------------------------------
-  // CHECK EXISTING ORDER BY AREA + DATE
+  // CHECK EXISTING ORDER BY AREA + DATE (PERÚ)
   // ---------------------------------------------------------------------------
   async checkExistingOrder(query: CheckOrderDto): Promise<{ exists: boolean }> {
     const { areaId, date } = query;
@@ -301,13 +401,14 @@ export class OrdersService {
     const exists = await this.existsOrderInPeruDate(areaIdNum, peruDate);
     return { exists };
   }
+
   // ---------------------------------------------------------------------------
-  // FILTER BY DATE RANGE
+  // FILTER BY DATE RANGE (PERÚ) ✅ FIX (fin exclusivo + ISO T)
   // ---------------------------------------------------------------------------
   async filterByDate(
     startDate: string,
     endDate: string,
-  ): Promise<OrderWithRelations[]> {
+  ): Promise<OrderWithPeru[]> {
     const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
 
     if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
@@ -315,53 +416,54 @@ export class OrdersService {
         'Las fechas deben tener el formato YYYY-MM-DD.',
       );
     }
-
     if (startDate > endDate) {
       throw new BadRequestException(
         'La fecha de inicio no puede ser mayor que la fecha de fin.',
       );
     }
 
-    const tz = 'America/Lima';
+    const startUtc = zonedTimeToUtc(`${startDate}T00:00:00.000`, this.peruTz);
 
-    const startUtc = zonedTimeToUtc(`${startDate} 00:00:00`, tz);
-    const endUtc = zonedTimeToUtc(`${endDate} 23:59:59.999`, tz);
+    const endStartUtc = zonedTimeToUtc(`${endDate}T00:00:00.000`, this.peruTz);
+    const endNextDayUtc = new Date(endStartUtc);
+    endNextDayUtc.setUTCDate(endNextDayUtc.getUTCDate() + 1);
 
-    return this.prisma.order.findMany({
+    const orders = await this.prisma.order.findMany({
       where: {
         createdAt: {
           gte: startUtc,
-          lte: endUtc,
+          lt: endNextDayUtc, // ✅ incluye todo el endDate Perú
         },
       },
       include: fullOrderInclude,
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: { createdAt: 'desc' },
     });
-  }
 
-  async findByUserId(userId: number): Promise<OrderWithRelations[]> {
-    return this.prisma.order.findMany({
-      where: {
-        userId,
-      },
-      include: fullOrderInclude,
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+    return orders.map((o) => this.addPeruFields(o));
   }
 
   // ---------------------------------------------------------------------------
-  // FIND ALL BY DAY (NO PAGINATION)
+  // FIND BY USER ID (HISTORIAL USUARIO) ✅ FIX (DEVUELVE FECHA PERÚ)
+  // ---------------------------------------------------------------------------
+  async findByUserId(userId: number): Promise<OrderWithPeru[]> {
+    const orders = await this.prisma.order.findMany({
+      where: { userId },
+      include: fullOrderInclude,
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return orders.map((o) => this.addPeruFields(o));
+  }
+
+  // ---------------------------------------------------------------------------
+  // FIND ALL BY DAY (NO PAGINATION) ✅ FIX (fin exclusivo + ISO T + devuelve fecha Perú)
   // ---------------------------------------------------------------------------
   async findAllByDay(query: {
     date: string;
     sortBy?: string;
     order?: 'asc' | 'desc';
     q?: string;
-  }): Promise<OrderWithRelations[]> {
+  }): Promise<OrderWithPeru[]> {
     const { date, sortBy, order = 'desc', q } = query;
 
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -370,9 +472,7 @@ export class OrdersService {
       );
     }
 
-    const tz = 'America/Lima';
-    const startUtc = zonedTimeToUtc(`${date} 00:00:00`, tz);
-    const endUtc = zonedTimeToUtc(`${date} 23:59:59.999`, tz);
+    const { startUtc, nextDayUtc } = this.getPeruDayRangeUtc(date);
 
     const allowedSortFields = new Set<
       keyof Prisma.OrderOrderByWithRelationInput
@@ -401,9 +501,8 @@ export class OrdersService {
     const where: Prisma.OrderWhereInput = {
       createdAt: {
         gte: startUtc,
-        lte: endUtc,
+        lt: nextDayUtc, // ✅ fin exclusivo
       },
-
       ...(q && {
         OR: [
           ...(Number.isFinite(qAsNumber) ? [{ id: qAsNumber }] : []),
@@ -417,10 +516,12 @@ export class OrdersService {
       }),
     };
 
-    return this.prisma.order.findMany({
+    const orders = await this.prisma.order.findMany({
       where,
       include: fullOrderInclude,
       orderBy,
     });
+
+    return orders.map((o) => this.addPeruFields(o));
   }
 }
