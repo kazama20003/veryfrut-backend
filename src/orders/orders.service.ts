@@ -50,6 +50,9 @@ type OrderWithRelations = Prisma.OrderGetPayload<{
   include: typeof fullOrderInclude;
 }>;
 
+/**
+ * Campos Perú extra
+ */
 type PeruDateFields = {
   createdAtPeruDate: string; // yyyy-MM-dd
   createdAtPeruTime: string; // HH:mm:ss
@@ -57,7 +60,15 @@ type PeruDateFields = {
   updatedAtPeru?: string; // yyyy-MM-dd HH:mm:ss
 };
 
-type OrderWithPeru = OrderWithRelations & PeruDateFields;
+/**
+ * ✅ Response final:
+ * - mantiene todo lo demás igual
+ * - PERO reemplaza createdAt/updatedAt por strings en hora Perú
+ */
+type OrderWithPeru = Omit<OrderWithRelations, 'createdAt' | 'updatedAt'> & {
+  createdAt: string; // "yyyy-MM-dd HH:mm:ss" (Perú)
+  updatedAt: string; // "yyyy-MM-dd HH:mm:ss" (Perú)
+} & PeruDateFields;
 
 type WithItems<T> = { items: T[] };
 type WithData<T> = { data: T[] };
@@ -97,13 +108,20 @@ export class OrdersService {
   } {
     // rango: [00:00 Perú, 00:00 del día siguiente Perú)
     const startUtc = zonedTimeToUtc(`${peruDate}T00:00:00.000`, this.peruTz);
+
+    // ✅ recomendado: no depender de sumar 24h, pero Perú no tiene DST; igual lo dejamos estable
     const nextDayUtc = new Date(startUtc);
     nextDayUtc.setUTCDate(nextDayUtc.getUTCDate() + 1);
+
     return { startUtc, nextDayUtc };
   }
 
+  /**
+   * ✅ Acá está el cambio clave:
+   * - convertimos createdAt/updatedAt a string en hora Perú
+   * - y además dejamos tus createdAtPeru* como venías haciendo
+   */
   private addPeruFields(order: OrderWithRelations): OrderWithPeru {
-    // ✅ sin type assertion innecesaria (arregla no-unnecessary-type-assertion)
     const createdAtPeruDate = formatInTimeZone(
       order.createdAt,
       this.peruTz,
@@ -120,25 +138,29 @@ export class OrdersService {
       'yyyy-MM-dd HH:mm:ss',
     );
 
+    const updatedAtPeru = formatInTimeZone(
+      order.updatedAt,
+      this.peruTz,
+      'yyyy-MM-dd HH:mm:ss',
+    );
+
     const base: OrderWithPeru = {
       ...order,
+      // ✅ estos son los que el FRONT ya usa
+      createdAt: createdAtPeru, // string Perú
+      updatedAt: updatedAtPeru, // string Perú
+
+      // ✅ extras
       createdAtPeruDate,
       createdAtPeruTime,
       createdAtPeru,
+      updatedAtPeru,
     };
-
-    if (order.updatedAt) {
-      base.updatedAtPeru = formatInTimeZone(
-        order.updatedAt,
-        this.peruTz,
-        'yyyy-MM-dd HH:mm:ss',
-      );
-    }
 
     return base;
   }
 
-  // ✅ Type-guards sin any (arregla no-unsafe-*)
+  // ✅ Type-guards sin any
   private hasItems<T>(
     res: unknown,
   ): res is PaginatedResponse<T> & WithItems<T> {
@@ -156,11 +178,8 @@ export class OrdersService {
   private mapPaginatedOrders(
     res: PaginatedResponse<OrderWithRelations>,
   ): PaginatedResponse<OrderWithPeru> {
-    // Si tu PaginatedResponse trae "items"
     if (this.hasItems<OrderWithRelations>(res)) {
       const mappedItems = res.items.map((o) => this.addPeruFields(o));
-
-      // Mantén el resto de propiedades igual, solo reemplaza items
       const base = res;
       return {
         ...(base as unknown as Omit<PaginatedResponse<OrderWithPeru>, 'items'>),
@@ -168,10 +187,8 @@ export class OrdersService {
       } as PaginatedResponse<OrderWithPeru>;
     }
 
-    // Si tu PaginatedResponse trae "data"
     if (this.hasData<OrderWithRelations>(res)) {
       const mappedData = res.data.map((o) => this.addPeruFields(o));
-
       const base = res;
       return {
         ...(base as unknown as Omit<PaginatedResponse<OrderWithPeru>, 'data'>),
@@ -179,7 +196,6 @@ export class OrdersService {
       } as PaginatedResponse<OrderWithPeru>;
     }
 
-    // Si tu PaginatedResponse usa otro nombre, devolvemos tal cual pero casteado
     return res as unknown as PaginatedResponse<OrderWithPeru>;
   }
 
@@ -194,7 +210,7 @@ export class OrdersService {
         areaId,
         createdAt: {
           gte: startUtc,
-          lt: nextDayUtc, // ✅ fin exclusivo
+          lt: nextDayUtc,
         },
       },
       select: { id: true },
@@ -314,7 +330,7 @@ export class OrdersService {
   }
 
   // ---------------------------------------------------------------------------
-  // UPDATE (MISMO DÍA – HORA PERÚ) ✅ FIX
+  // UPDATE (MISMO DÍA – HORA PERÚ)
   // ---------------------------------------------------------------------------
   async update(id: number, dto: UpdateOrderDto): Promise<OrderWithPeru> {
     const existingOrder = await this.prisma.order.findUnique({ where: { id } });
@@ -323,7 +339,6 @@ export class OrdersService {
       throw new NotFoundException(`Orden con ID ${id} no encontrada`);
     }
 
-    // ✅ comparar por FECHA Perú (string) para no depender del TZ del servidor
     const createdPeruDate = formatInTimeZone(
       existingOrder.createdAt,
       this.peruTz,
@@ -403,7 +418,7 @@ export class OrdersService {
   }
 
   // ---------------------------------------------------------------------------
-  // FILTER BY DATE RANGE (PERÚ) ✅ FIX (fin exclusivo + ISO T)
+  // FILTER BY DATE RANGE (PERÚ)
   // ---------------------------------------------------------------------------
   async filterByDate(
     startDate: string,
@@ -432,7 +447,7 @@ export class OrdersService {
       where: {
         createdAt: {
           gte: startUtc,
-          lt: endNextDayUtc, // ✅ incluye todo el endDate Perú
+          lt: endNextDayUtc,
         },
       },
       include: fullOrderInclude,
@@ -443,7 +458,7 @@ export class OrdersService {
   }
 
   // ---------------------------------------------------------------------------
-  // FIND BY USER ID (HISTORIAL USUARIO) ✅ FIX (DEVUELVE FECHA PERÚ)
+  // FIND BY USER ID
   // ---------------------------------------------------------------------------
   async findByUserId(userId: number): Promise<OrderWithPeru[]> {
     const orders = await this.prisma.order.findMany({
@@ -456,7 +471,7 @@ export class OrdersService {
   }
 
   // ---------------------------------------------------------------------------
-  // FIND ALL BY DAY (NO PAGINATION) ✅ FIX (fin exclusivo + ISO T + devuelve fecha Perú)
+  // FIND ALL BY DAY (NO PAGINATION)
   // ---------------------------------------------------------------------------
   async findAllByDay(query: {
     date: string;
@@ -501,7 +516,7 @@ export class OrdersService {
     const where: Prisma.OrderWhereInput = {
       createdAt: {
         gte: startUtc,
-        lt: nextDayUtc, // ✅ fin exclusivo
+        lt: nextDayUtc,
       },
       ...(q && {
         OR: [
