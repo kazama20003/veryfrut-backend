@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   NotFoundException,
   BadRequestException,
@@ -50,6 +50,12 @@ type OrderWithRelations = Prisma.OrderGetPayload<{
   include: typeof fullOrderInclude;
 }>;
 
+// ✅ Tipo de salida API: createdAt/updatedAt como string (Perú)
+type OrderApi = Omit<OrderWithRelations, 'createdAt' | 'updatedAt'> & {
+  createdAt: string; // Perú
+  updatedAt: string; // Perú
+};
+
 @Injectable()
 export class OrdersService {
   private readonly peruTz = 'America/Lima';
@@ -58,6 +64,26 @@ export class OrdersService {
     private readonly prisma: PrismaService,
     private readonly pagination: PaginationService,
   ) {}
+
+  // ✅ convierte Date UTC -> string Perú
+  private toPeruDateTimeString(d: Date): string {
+    // formato ISO-like sin Z (hora Perú)
+    return formatInTimeZone(d, this.peruTz, "yyyy-MM-dd'T'HH:mm:ss");
+  }
+
+  // ✅ transforma una orden para que createdAt/updatedAt salgan en Perú
+  private toApi(order: OrderWithRelations): OrderApi {
+    const { createdAt, updatedAt, ...rest } = order;
+    return {
+      ...rest,
+      createdAt: this.toPeruDateTimeString(createdAt),
+      updatedAt: this.toPeruDateTimeString(updatedAt),
+    };
+  }
+
+  private toApiMany(orders: OrderWithRelations[]): OrderApi[] {
+    return orders.map((o) => this.toApi(o));
+  }
 
   private normalizeToPeruDate(dateInput: string): string {
     const value = dateInput.trim();
@@ -101,8 +127,8 @@ export class OrdersService {
   // ---------------------------------------------------------------------------
   // CREATE
   // ---------------------------------------------------------------------------
-  async create(dto: CreateOrderDto): Promise<OrderWithRelations> {
-    return this.prisma.order.create({
+  async create(dto: CreateOrderDto): Promise<OrderApi> {
+    const created = await this.prisma.order.create({
       data: {
         userId: dto.userId,
         areaId: dto.areaId,
@@ -120,14 +146,16 @@ export class OrdersService {
       },
       include: fullOrderInclude,
     });
+
+    return this.toApi(created);
   }
 
   // ---------------------------------------------------------------------------
-  // FIND ALL (PAGINATED)
+  // FIND ALL (PAGINATED) -> data con fechas Perú
   // ---------------------------------------------------------------------------
   async findAll(
     query: PaginationQueryDto,
-  ): Promise<PaginatedResponse<OrderWithRelations>> {
+  ): Promise<PaginatedResponse<OrderApi>> {
     const { page = 1, limit = 10, sortBy, order = 'desc', q } = query;
 
     const allowedSortFields = new Set<
@@ -172,7 +200,7 @@ export class OrdersService {
       count: (args: Prisma.OrderCountArgs) => this.prisma.order.count(args),
     };
 
-    return this.pagination.paginate<
+    const result = await this.pagination.paginate<
       OrderWithRelations,
       Prisma.OrderFindManyArgs,
       Prisma.OrderCountArgs
@@ -186,12 +214,17 @@ export class OrdersService {
       },
       countArgs: { where },
     });
+
+    return {
+      ...result,
+      data: this.toApiMany(result.data),
+    };
   }
 
   // ---------------------------------------------------------------------------
-  // FIND ONE
+  // FIND ONE -> fechas Perú
   // ---------------------------------------------------------------------------
-  async findOne(id: number): Promise<OrderWithRelations> {
+  async findOne(id: number): Promise<OrderApi> {
     if (!id) {
       throw new BadRequestException('El ID es obligatorio');
     }
@@ -205,13 +238,13 @@ export class OrdersService {
       throw new NotFoundException(`Orden con ID ${id} no encontrada`);
     }
 
-    return order;
+    return this.toApi(order);
   }
 
   // ---------------------------------------------------------------------------
-  // UPDATE (MISMO DÍA – HORA PERÚ)
+  // UPDATE (MISMO DÍA – HORA PERÚ) -> devuelve fechas Perú
   // ---------------------------------------------------------------------------
-  async update(id: number, dto: UpdateOrderDto): Promise<OrderWithRelations> {
+  async update(id: number, dto: UpdateOrderDto): Promise<OrderApi> {
     const existingOrder = await this.prisma.order.findUnique({
       where: { id },
     });
@@ -220,7 +253,7 @@ export class OrdersService {
       throw new NotFoundException(`Orden con ID ${id} no encontrada`);
     }
 
-    const tz = 'America/Lima';
+    const tz = this.peruTz;
 
     const createdAtPeru = utcToZonedTime(existingOrder.createdAt, tz);
     const nowPeru = utcToZonedTime(new Date(), tz);
@@ -237,7 +270,7 @@ export class OrdersService {
       );
     }
 
-    return this.prisma.order.update({
+    const updated = await this.prisma.order.update({
       where: { id },
       data: {
         totalAmount: dto.totalAmount,
@@ -257,6 +290,8 @@ export class OrdersService {
       },
       include: fullOrderInclude,
     });
+
+    return this.toApi(updated);
   }
 
   // ---------------------------------------------------------------------------
@@ -269,7 +304,6 @@ export class OrdersService {
       throw new NotFoundException(`Orden con ID ${id} no encontrada`);
     }
 
-    // Transacción para asegurar consistencia
     await this.prisma.$transaction([
       this.prisma.orderItem.deleteMany({ where: { orderId: id } }),
       this.prisma.order.delete({ where: { id } }),
@@ -277,7 +311,7 @@ export class OrdersService {
   }
 
   // ---------------------------------------------------------------------------
-  // CHECK EXISTING ORDER BY AREA + DATE
+  // CHECK EXISTING ORDER BY AREA + DATE (usa createdAt pero día Perú)
   // ---------------------------------------------------------------------------
   async checkExistingOrder(query: CheckOrderDto): Promise<{ exists: boolean }> {
     const { areaId, date } = query;
@@ -301,13 +335,11 @@ export class OrdersService {
     const exists = await this.existsOrderInPeruDate(areaIdNum, peruDate);
     return { exists };
   }
+
   // ---------------------------------------------------------------------------
-  // FILTER BY DATE RANGE
+  // FILTER BY DATE RANGE -> devuelve fechas Perú
   // ---------------------------------------------------------------------------
-  async filterByDate(
-    startDate: string,
-    endDate: string,
-  ): Promise<OrderWithRelations[]> {
+  async filterByDate(startDate: string, endDate: string): Promise<OrderApi[]> {
     const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
 
     if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
@@ -322,46 +354,48 @@ export class OrdersService {
       );
     }
 
-    const tz = 'America/Lima';
+    const startUtc = zonedTimeToUtc(`${startDate}T00:00:00`, this.peruTz);
+    const endUtc = zonedTimeToUtc(`${endDate}T23:59:59.999`, this.peruTz);
 
-    const startUtc = zonedTimeToUtc(`${startDate} 00:00:00`, tz);
-    const endUtc = zonedTimeToUtc(`${endDate} 23:59:59.999`, tz);
-
-    return this.prisma.order.findMany({
+    const orders = await this.prisma.order.findMany({
       where: {
-        createdAt: {
-          gte: startUtc,
-          lte: endUtc,
-        },
+        createdAt: { gte: startUtc, lte: endUtc },
       },
       include: fullOrderInclude,
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: { createdAt: 'desc' },
     });
-  }
 
-  async findByUserId(userId: number): Promise<OrderWithRelations[]> {
-    return this.prisma.order.findMany({
-      where: {
-        userId,
-      },
-      include: fullOrderInclude,
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+    return this.toApiMany(orders);
   }
 
   // ---------------------------------------------------------------------------
-  // FIND ALL BY DAY (NO PAGINATION)
+  // HISTORIAL POR USER -> devuelve fechas Perú
+  // ---------------------------------------------------------------------------
+  async findByUserId(userId: number): Promise<OrderApi[]> {
+    if (!userId || userId <= 0) {
+      throw new BadRequestException(
+        'El userId es obligatorio y debe ser válido.',
+      );
+    }
+
+    const orders = await this.prisma.order.findMany({
+      where: { userId },
+      include: fullOrderInclude,
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return this.toApiMany(orders);
+  }
+
+  // ---------------------------------------------------------------------------
+  // FIND ALL BY DAY (NO PAGINATION) -> devuelve fechas Perú
   // ---------------------------------------------------------------------------
   async findAllByDay(query: {
     date: string;
     sortBy?: string;
     order?: 'asc' | 'desc';
     q?: string;
-  }): Promise<OrderWithRelations[]> {
+  }): Promise<OrderApi[]> {
     const { date, sortBy, order = 'desc', q } = query;
 
     if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -370,9 +404,8 @@ export class OrdersService {
       );
     }
 
-    const tz = 'America/Lima';
-    const startUtc = zonedTimeToUtc(`${date} 00:00:00`, tz);
-    const endUtc = zonedTimeToUtc(`${date} 23:59:59.999`, tz);
+    const startUtc = zonedTimeToUtc(`${date}T00:00:00`, this.peruTz);
+    const endUtc = zonedTimeToUtc(`${date}T23:59:59.999`, this.peruTz);
 
     const allowedSortFields = new Set<
       keyof Prisma.OrderOrderByWithRelationInput
@@ -399,11 +432,7 @@ export class OrdersService {
     const qAsNumber = Number(q);
 
     const where: Prisma.OrderWhereInput = {
-      createdAt: {
-        gte: startUtc,
-        lte: endUtc,
-      },
-
+      createdAt: { gte: startUtc, lte: endUtc },
       ...(q && {
         OR: [
           ...(Number.isFinite(qAsNumber) ? [{ id: qAsNumber }] : []),
@@ -417,10 +446,12 @@ export class OrdersService {
       }),
     };
 
-    return this.prisma.order.findMany({
+    const orders = await this.prisma.order.findMany({
       where,
       include: fullOrderInclude,
       orderBy,
     });
+
+    return this.toApiMany(orders);
   }
 }
