@@ -18,6 +18,7 @@ import { PaginationQueryDto } from 'src/common/pagination/pagination.dto';
 import { PaginatedResponse } from 'src/common/pagination/paginated-response';
 import { Supplier, Purchase } from '@prisma/client';
 import { UpdatePurchaseItemDto } from './dto/update-purchase-item.dto';
+import { CreatePurchaseItemDto } from './dto/create-purchase-item.dto';
 @Controller('supliers')
 export class SupliersController {
   constructor(private readonly supliersService: SupliersService) {}
@@ -84,6 +85,21 @@ export class SupliersController {
     @Body() dto: UpdatePurchaseItemDto,
   ) {
     return this.supliersService.updatePurchaseItem(itemId, dto);
+  }
+
+  @Post('purchases/:purchaseId/items')
+  createPurchaseItem(
+    @Param('purchaseId', ParseIntPipe) purchaseId: number,
+    @Body() dto: CreatePurchaseItemDto,
+  ) {
+    return this.supliersService.createPurchaseItem(purchaseId, dto);
+  }
+
+  @Post('purchases/items')
+  createPurchaseItemWithPurchaseInBody(
+    @Body() dto: CreatePurchaseItemDto & { purchaseId: number },
+  ) {
+    return this.supliersService.createPurchaseItemFromBody(dto);
   }
 
   @Patch('purchases/:purchaseId')

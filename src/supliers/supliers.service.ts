@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   InternalServerErrorException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { PaginationService } from 'src/common/pagination/pagination.service';
@@ -14,6 +15,7 @@ import { PaginationQueryDto } from 'src/common/pagination/pagination.dto';
 import { PaginatedResponse } from 'src/common/pagination/paginated-response';
 import { zonedTimeToUtc } from 'date-fns-tz';
 import { UpdatePurchaseItemDto } from './dto/update-purchase-item.dto';
+import { CreatePurchaseItemDto } from './dto/create-purchase-item.dto';
 
 const TZ = 'America/Lima';
 
@@ -443,6 +445,72 @@ export class SupliersService {
           );
     }
   }
+  async createPurchaseItem(purchaseId: number, dto: CreatePurchaseItemDto) {
+    try {
+      const purchase = await this.prisma.purchase.findUnique({
+        where: { id: purchaseId },
+        select: { id: true },
+      });
+
+      if (!purchase) {
+        throw new NotFoundException(
+          `Compra con ID ${purchaseId} no encontrada`,
+        );
+      }
+
+      const totalCost = dto.quantity * dto.unitCost;
+
+      return await this.prisma.$transaction(async (tx) => {
+        const createdItem = await tx.purchaseItem.create({
+          data: {
+            purchaseId,
+            productId: dto.productId,
+            description: dto.description,
+            quantity: dto.quantity,
+            unitMeasurementId: dto.unitMeasurementId,
+            unitCost: dto.unitCost,
+            totalCost,
+          },
+        });
+
+        const agg = await tx.purchaseItem.aggregate({
+          where: { purchaseId },
+          _sum: { totalCost: true },
+        });
+
+        await tx.purchase.update({
+          where: { id: purchaseId },
+          data: { totalAmount: agg._sum.totalCost ?? 0 },
+        });
+
+        return createdItem;
+      });
+    } catch (error) {
+      console.error('Error creating purchase item:', error);
+      throw error instanceof NotFoundException
+        ? error
+        : new InternalServerErrorException('Error al crear el item de compra');
+    }
+  }
+
+  async createPurchaseItemFromBody(
+    dto: CreatePurchaseItemDto & { purchaseId: number },
+  ) {
+    const purchaseId = Number(dto.purchaseId);
+    if (!Number.isInteger(purchaseId) || purchaseId <= 0) {
+      throw new BadRequestException('purchaseId debe ser un número válido');
+    }
+
+    const itemDto: CreatePurchaseItemDto = {
+      productId: dto.productId,
+      description: dto.description,
+      quantity: dto.quantity,
+      unitMeasurementId: dto.unitMeasurementId,
+      unitCost: dto.unitCost,
+    };
+    return this.createPurchaseItem(purchaseId, itemDto);
+  }
+
   async removePurchaseItem(itemId: number) {
     try {
       const item = await this.prisma.purchaseItem.findUnique({
