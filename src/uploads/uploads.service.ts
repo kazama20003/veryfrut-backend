@@ -1,7 +1,14 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
-import { v2 as cloudinary } from 'cloudinary';
+import {
+  v2 as cloudinary,
+  UploadApiResponse,
+  UploadApiErrorResponse,
+} from 'cloudinary';
 import { Readable } from 'stream';
-import { UploadApiResponse, UploadApiErrorResponse } from 'cloudinary';
+
+interface CloudinaryDestroyResult {
+  result: string;
+}
 
 @Injectable()
 export class UploadsService {
@@ -16,9 +23,18 @@ export class UploadsService {
   async uploadImage(
     file: Express.Multer.File,
   ): Promise<{ url: string; publicId: string }> {
+    if (!file?.buffer) {
+      throw new InternalServerErrorException(
+        'El archivo llegó sin buffer. Verifica Multer memoryStorage().',
+      );
+    }
+
     return new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
-        { folder: 'uploads' },
+        {
+          folder: 'uploads',
+          resource_type: 'image',
+        },
         (
           error: UploadApiErrorResponse | undefined,
           result: UploadApiResponse | undefined,
@@ -26,48 +42,40 @@ export class UploadsService {
           if (error) {
             reject(
               new InternalServerErrorException(
-                'Error al subir el archivo a Cloudinary',
+                error.message || 'Error al subir el archivo a Cloudinary',
               ),
             );
             return;
           }
+
           if (!result) {
             reject(
               new InternalServerErrorException(
-                'Subida fallida: No se obtuvo un resultado',
+                'Subida fallida: no se obtuvo un resultado',
               ),
             );
             return;
           }
-          resolve({ url: result.secure_url, publicId: result.public_id });
+
+          resolve({
+            url: result.secure_url,
+            publicId: result.public_id,
+          });
         },
       );
 
-      try {
-        const readableStream = new Readable();
-        readableStream.push(file.buffer);
-        readableStream.push(null);
-        readableStream.pipe(uploadStream);
-      } catch {
-        reject(
-          new InternalServerErrorException(
-            'Error desconocido al procesar el archivo',
-          ),
-        );
-      }
+      const readableStream = new Readable();
+      readableStream.push(file.buffer);
+      readableStream.push(null);
+      readableStream.pipe(uploadStream);
     });
   }
 
   async deleteFile(publicId: string): Promise<{ message: string }> {
     try {
-      // Aseguramos que el publicId incluya "uploads/"
-      const fullPublicId = `uploads/${publicId}`;
+      const result: unknown = await cloudinary.uploader.destroy(publicId);
 
-      const result = (await cloudinary.uploader.destroy(fullPublicId)) as {
-        result: string;
-      };
-
-      if (result.result !== 'ok') {
+      if (!this.isCloudinaryDestroyResult(result) || result.result !== 'ok') {
         throw new InternalServerErrorException(
           'No se pudo eliminar el archivo',
         );
@@ -79,5 +87,16 @@ export class UploadsService {
         'Error al eliminar el archivo en Cloudinary',
       );
     }
+  }
+
+  private isCloudinaryDestroyResult(
+    value: unknown,
+  ): value is CloudinaryDestroyResult {
+    return (
+      typeof value === 'object' &&
+      value !== null &&
+      'result' in value &&
+      typeof value.result === 'string'
+    );
   }
 }
