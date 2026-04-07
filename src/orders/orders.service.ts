@@ -223,6 +223,23 @@ export class OrdersService {
   // CREATE
   // ---------------------------------------------------------------------------
   async create(dto: CreateOrderDto): Promise<OrderWithPeru> {
+    const todayPeruDate = formatInTimeZone(
+      new Date(),
+      this.peruTz,
+      'yyyy-MM-dd',
+    );
+
+    const alreadyExistsForArea = await this.existsOrderInPeruDate(
+      dto.areaId,
+      todayPeruDate,
+    );
+
+    if (alreadyExistsForArea) {
+      throw new BadRequestException(
+        `Ya existe una orden registrada para el area ${dto.areaId} en la fecha ${todayPeruDate}.`,
+      );
+    }
+
     const created = await this.prisma.order.create({
       data: {
         userId: dto.userId,
