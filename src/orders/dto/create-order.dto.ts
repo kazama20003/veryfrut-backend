@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  IsDateString,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -52,6 +53,10 @@ export class CreateOrderDto {
   @IsOptional()
   @IsString()
   observation?: string;
+
+  @IsOptional()
+  @IsDateString()
+  scheduledFor?: string;
 
   @IsArray()
   @ValidateNested({ each: true })

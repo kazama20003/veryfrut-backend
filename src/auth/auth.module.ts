@@ -8,7 +8,7 @@ import { JwtAuthGuard } from './guard/jwt-auth.guard';
   imports: [
     JwtModule.register({
       secret: 'your-secret-key', // Cambia esto a una clave segura y mantenla en un archivo de configuración
-      signOptions: { expiresIn: '24h' },
+      signOptions: { expiresIn: '30d' },
     }),
   ],
   controllers: [AuthController],

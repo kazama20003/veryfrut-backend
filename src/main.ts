@@ -1,7 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { Logger } from '@nestjs/common';
-import { envs } from './config/envs';
 import { ValidationPipe } from '@nestjs/common';
 
 async function bootstrap() {
@@ -17,8 +16,8 @@ async function bootstrap() {
   );
 
   // Forzar sólo IPv4 (opcional, pero recomendado en este entorno)
-  const host = '127.0.0.1';
-  const port = envs.port;
+  const host = '0.0.0.0';
+  const port = process.env.PORT || 8080;
 
   // <-- Habilitamos CORS aquí, con el origen de tu frontend
   app.enableCors({
@@ -27,6 +26,8 @@ async function bootstrap() {
       'https://www.veryfrut.com',
       'localhost:3000',
       'http://localhost:3000',
+      'localhost:8080',
+      'http://localhost:8080',
     ],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],

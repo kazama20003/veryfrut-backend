@@ -2,6 +2,7 @@
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { PaginationService } from 'src/common/pagination/pagination.service';
@@ -43,12 +44,36 @@ const fullOrderInclude = {
   },
 } as const;
 
+const deletedOrderInclude = {
+  deletedOrderItems: true,
+} as const;
+
 /**
  * Order con todas sus relaciones (tipado automáticamente a partir de fullOrderInclude)
  */
 type OrderWithRelations = Prisma.OrderGetPayload<{
   include: typeof fullOrderInclude;
 }>;
+
+type DeletedOrderWithItems = Prisma.DeletedOrderGetPayload<{
+  include: typeof deletedOrderInclude;
+}>;
+
+type DeletedOrderItemWithData = Omit<
+  DeletedOrderWithItems['deletedOrderItems'][number],
+  never
+> & {
+  product: OrderWithRelations['orderItems'][number]['product'] | null;
+  unitMeasurement:
+    | OrderWithRelations['orderItems'][number]['unitMeasurement']
+    | null;
+};
+
+type DeletedOrderWithData = Omit<DeletedOrderWithItems, 'deletedOrderItems'> & {
+  area: OrderWithRelations['area'] | null;
+  User: OrderWithRelations['User'] | null;
+  deletedOrderItems: DeletedOrderItemWithData[];
+};
 
 /**
  * Campos Perú extra
@@ -70,12 +95,25 @@ type OrderWithPeru = Omit<OrderWithRelations, 'createdAt' | 'updatedAt'> & {
   updatedAt: string; // "yyyy-MM-dd HH:mm:ss" (Perú)
 } & PeruDateFields;
 
+type DeletedOrderWithPeru = Omit<
+  DeletedOrderWithData,
+  'originalCreatedAt' | 'originalUpdatedAt' | 'deletedAt'
+> & {
+  originalCreatedAt: string;
+  originalUpdatedAt: string;
+  deletedAt: string;
+  originalCreatedAtPeruDate: string;
+  originalCreatedAtPeruTime: string;
+};
+
 type WithItems<T> = { items: T[] };
 type WithData<T> = { data: T[] };
 
 @Injectable()
 export class OrdersService {
   private readonly peruTz = 'America/Lima';
+  private readonly orderOpeningTime = '06:00';
+  private readonly orderClosingTime = '21:30';
 
   constructor(
     private readonly prisma: PrismaService,
@@ -160,6 +198,115 @@ export class OrdersService {
     return base;
   }
 
+  private addDeletedOrderPeruFields(
+    order: DeletedOrderWithData,
+  ): DeletedOrderWithPeru {
+    const originalCreatedAtPeruDate = formatInTimeZone(
+      order.originalCreatedAt,
+      this.peruTz,
+      'yyyy-MM-dd',
+    );
+    const originalCreatedAtPeruTime = formatInTimeZone(
+      order.originalCreatedAt,
+      this.peruTz,
+      'HH:mm:ss',
+    );
+
+    return {
+      ...order,
+      originalCreatedAt: formatInTimeZone(
+        order.originalCreatedAt,
+        this.peruTz,
+        'yyyy-MM-dd HH:mm:ss',
+      ),
+      originalUpdatedAt: formatInTimeZone(
+        order.originalUpdatedAt,
+        this.peruTz,
+        'yyyy-MM-dd HH:mm:ss',
+      ),
+      deletedAt: formatInTimeZone(
+        order.deletedAt,
+        this.peruTz,
+        'yyyy-MM-dd HH:mm:ss',
+      ),
+      originalCreatedAtPeruDate,
+      originalCreatedAtPeruTime,
+    };
+  }
+
+  private uniqueNumbers(values: Array<number | null | undefined>): number[] {
+    return [...new Set(values.filter((value): value is number => !!value))];
+  }
+
+  private async hydrateDeletedOrders(
+    orders: DeletedOrderWithItems[],
+  ): Promise<DeletedOrderWithData[]> {
+    if (orders.length === 0) return [];
+
+    const areaIds = this.uniqueNumbers(orders.map((order) => order.areaId));
+    const userIds = this.uniqueNumbers(orders.map((order) => order.userId));
+    const productIds = this.uniqueNumbers(
+      orders.flatMap((order) =>
+        order.deletedOrderItems.map((item) => item.productId),
+      ),
+    );
+    const unitMeasurementIds = this.uniqueNumbers(
+      orders.flatMap((order) =>
+        order.deletedOrderItems.map((item) => item.unitMeasurementId),
+      ),
+    );
+
+    const [areas, users, products, unitMeasurements] = await Promise.all([
+      this.prisma.area.findMany({
+        where: { id: { in: areaIds } },
+        include: { company: true },
+      }),
+      this.prisma.user.findMany({
+        where: { id: { in: userIds } },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          phone: true,
+          address: true,
+          role: true,
+        },
+      }),
+      this.prisma.product.findMany({
+        where: { id: { in: productIds } },
+        include: { category: true },
+      }),
+      this.prisma.unitMeasurement.findMany({
+        where: { id: { in: unitMeasurementIds } },
+      }),
+    ]);
+
+    const areaById = new Map(areas.map((area) => [area.id, area]));
+    const userById = new Map(users.map((user) => [user.id, user]));
+    const productById = new Map(
+      products.map((product) => [product.id, product]),
+    );
+    const unitMeasurementById = new Map(
+      unitMeasurements.map((unitMeasurement) => [
+        unitMeasurement.id,
+        unitMeasurement,
+      ]),
+    );
+
+    return orders.map((order) => ({
+      ...order,
+      area: areaById.get(order.areaId) ?? null,
+      User: order.userId ? (userById.get(order.userId) ?? null) : null,
+      deletedOrderItems: order.deletedOrderItems.map((item) => ({
+        ...item,
+        product: productById.get(item.productId) ?? null,
+        unitMeasurement:
+          unitMeasurementById.get(item.unitMeasurementId) ?? null,
+      })),
+    }));
+  }
+
   // ✅ Type-guards sin any
   private hasItems<T>(
     res: unknown,
@@ -199,19 +346,14 @@ export class OrdersService {
     return res as unknown as PaginatedResponse<OrderWithPeru>;
   }
 
-  private async existsOrderInPeruDate(
+  private async existsOrderForScheduledDate(
     areaId: number,
     peruDate: string,
   ): Promise<boolean> {
-    const { startUtc, nextDayUtc } = this.getPeruDayRangeUtc(peruDate);
-
     const existingOrder = await this.prisma.order.findFirst({
       where: {
         areaId,
-        createdAt: {
-          gte: startUtc,
-          lt: nextDayUtc,
-        },
+        scheduledFor: new Date(`${peruDate}T00:00:00.000Z`),
       },
       select: { id: true },
     });
@@ -219,24 +361,55 @@ export class OrdersService {
     return !!existingOrder;
   }
 
+  private ensureOrderWindowIsOpen(): void {
+    const timeInPeru = formatInTimeZone(new Date(), this.peruTz, 'HH:mm');
+
+    if (
+      timeInPeru < this.orderOpeningTime ||
+      timeInPeru >= this.orderClosingTime
+    ) {
+      throw new ForbiddenException(
+        'La recepción de pedidos está disponible desde las 6:00 a. m. Comunícate con el administrador al 987 801 148.',
+      );
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // CREATE
   // ---------------------------------------------------------------------------
-  async create(dto: CreateOrderDto): Promise<OrderWithPeru> {
+  async create(
+    dto: CreateOrderDto,
+    userRole?: string,
+  ): Promise<OrderWithPeru> {
     const todayPeruDate = formatInTimeZone(
       new Date(),
       this.peruTz,
       'yyyy-MM-dd',
     );
 
-    const alreadyExistsForArea = await this.existsOrderInPeruDate(
+    if (userRole !== 'admin') {
+      this.ensureOrderWindowIsOpen();
+    }
+
+    const scheduledFor =
+      userRole === 'admin' && dto.scheduledFor
+        ? this.normalizeToPeruDate(dto.scheduledFor)
+        : todayPeruDate;
+
+    if (scheduledFor < todayPeruDate) {
+      throw new BadRequestException(
+        'No se pueden crear pedidos para fechas pasadas.',
+      );
+    }
+
+    const alreadyExistsForArea = await this.existsOrderForScheduledDate(
       dto.areaId,
-      todayPeruDate,
+      scheduledFor,
     );
 
     if (alreadyExistsForArea) {
       throw new BadRequestException(
-        `Ya existe una orden registrada para el area ${dto.areaId} en la fecha ${todayPeruDate}.`,
+        `Ya existe una orden registrada para el area ${dto.areaId} en la fecha ${scheduledFor}.`,
       );
     }
 
@@ -247,6 +420,7 @@ export class OrdersService {
         totalAmount: dto.totalAmount,
         status: dto.status,
         observation: dto.observation,
+        scheduledFor: new Date(`${scheduledFor}T00:00:00.000Z`),
         orderItems: {
           create: dto.orderItems.map((item) => ({
             productId: item.productId,
@@ -396,16 +570,272 @@ export class OrdersService {
   // ---------------------------------------------------------------------------
   // DELETE
   // ---------------------------------------------------------------------------
-  async remove(id: number): Promise<void> {
-    const exists = await this.prisma.order.findUnique({ where: { id } });
+  async remove(id: number, deletedByRole?: string): Promise<void> {
+    const existingOrder = await this.prisma.order.findUnique({
+      where: { id },
+      include: {
+        orderItems: true,
+      },
+    });
 
-    if (!exists)
+    if (!existingOrder)
       throw new NotFoundException(`Orden con ID ${id} no encontrada`);
 
-    await this.prisma.$transaction([
-      this.prisma.orderItem.deleteMany({ where: { orderId: id } }),
-      this.prisma.order.delete({ where: { id } }),
+    const shouldArchive = deletedByRole?.toLowerCase() === 'admin';
+
+    if (!shouldArchive) {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.orderItem.deleteMany({ where: { orderId: id } });
+        await tx.order.delete({ where: { id } });
+      });
+      return;
+    }
+
+    const alreadyArchived = await this.prisma.deletedOrder.findUnique({
+      where: { originalOrderId: id },
+      select: { id: true },
+    });
+
+    if (alreadyArchived) {
+      throw new BadRequestException(
+        `La orden con ID ${id} ya existe en la papelera.`,
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.deletedOrder.create({
+        data: {
+          originalOrderId: existingOrder.id,
+          areaId: existingOrder.areaId,
+          userId: existingOrder.userId,
+          totalAmount: existingOrder.totalAmount,
+          status: existingOrder.status,
+          observation: existingOrder.observation,
+          scheduledFor: existingOrder.scheduledFor,
+          originalCreatedAt: existingOrder.createdAt,
+          originalUpdatedAt: existingOrder.updatedAt,
+          deletedOrderItems: {
+            create: existingOrder.orderItems.map((item) => ({
+              originalItemId: item.id,
+              productId: item.productId,
+              quantity: item.quantity,
+              price: item.price,
+              unitMeasurementId: item.unitMeasurementId,
+            })),
+          },
+        },
+      });
+
+      await tx.orderItem.deleteMany({ where: { orderId: id } });
+      await tx.order.delete({ where: { id } });
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // DELETED ORDERS
+  // ---------------------------------------------------------------------------
+  async findDeleted(
+    query: PaginationQueryDto,
+  ): Promise<PaginatedResponse<DeletedOrderWithPeru>> {
+    const { page = 1, limit = 10, sortBy, order = 'desc', q } = query;
+
+    const allowedSortFields = new Set<
+      keyof Prisma.DeletedOrderOrderByWithRelationInput
+    >([
+      'id',
+      'originalOrderId',
+      'areaId',
+      'userId',
+      'totalAmount',
+      'status',
+      'originalCreatedAt',
+      'originalUpdatedAt',
+      'deletedAt',
     ]);
+
+    const safeSortBy = allowedSortFields.has(
+      sortBy as keyof Prisma.DeletedOrderOrderByWithRelationInput,
+    )
+      ? sortBy
+      : 'deletedAt';
+
+    const orderBy = this.pagination.buildOrderBy(safeSortBy, order);
+    const qAsNumber = Number(q);
+
+    const where: Prisma.DeletedOrderWhereInput | undefined = q
+      ? {
+          OR: [
+            ...(Number.isFinite(qAsNumber)
+              ? [
+                  { id: qAsNumber },
+                  { originalOrderId: qAsNumber },
+                  { areaId: qAsNumber },
+                ]
+              : []),
+            {
+              observation: {
+                contains: q,
+                mode: 'insensitive',
+              },
+            },
+            {
+              status: {
+                contains: q,
+                mode: 'insensitive',
+              },
+            },
+          ],
+        }
+      : undefined;
+
+    const delegate = {
+      findMany: (args: Prisma.DeletedOrderFindManyArgs) =>
+        this.prisma.deletedOrder.findMany(args) as Promise<
+          DeletedOrderWithItems[]
+        >,
+      count: (args: Prisma.DeletedOrderCountArgs) =>
+        this.prisma.deletedOrder.count(args),
+    };
+
+    const result = await this.pagination.paginate<
+      DeletedOrderWithItems,
+      Prisma.DeletedOrderFindManyArgs,
+      Prisma.DeletedOrderCountArgs
+    >(delegate, {
+      page,
+      limit,
+      findManyArgs: {
+        where,
+        include: deletedOrderInclude,
+        orderBy,
+      },
+      countArgs: { where },
+    });
+
+    const hydratedOrders = await this.hydrateDeletedOrders(result.data);
+
+    return {
+      ...result,
+      data: hydratedOrders.map((o) => this.addDeletedOrderPeruFields(o)),
+    };
+  }
+
+  async findDeletedOne(id: number): Promise<DeletedOrderWithPeru> {
+    if (!id) throw new BadRequestException('El ID es obligatorio');
+
+    const deletedOrder = await this.prisma.deletedOrder.findUnique({
+      where: { id },
+      include: deletedOrderInclude,
+    });
+
+    if (!deletedOrder) {
+      throw new NotFoundException(`Orden eliminada con ID ${id} no encontrada`);
+    }
+
+    const [hydratedOrder] = await this.hydrateDeletedOrders([deletedOrder]);
+
+    return this.addDeletedOrderPeruFields(hydratedOrder);
+  }
+
+  async restoreDeleted(id: number): Promise<OrderWithPeru> {
+    if (!id) throw new BadRequestException('El ID es obligatorio');
+
+    const deletedOrder = await this.prisma.deletedOrder.findUnique({
+      where: { id },
+      include: deletedOrderInclude,
+    });
+
+    if (!deletedOrder) {
+      throw new NotFoundException(`Orden eliminada con ID ${id} no encontrada`);
+    }
+
+    const activeOrderWithSameId = await this.prisma.order.findUnique({
+      where: { id: deletedOrder.originalOrderId },
+      select: { id: true },
+    });
+
+    if (activeOrderWithSameId) {
+      throw new BadRequestException(
+        `Ya existe una orden activa con ID ${deletedOrder.originalOrderId}.`,
+      );
+    }
+
+    const scheduledFor = formatInTimeZone(
+      deletedOrder.scheduledFor,
+      'UTC',
+      'yyyy-MM-dd',
+    );
+    const alreadyExistsForArea = await this.existsOrderForScheduledDate(
+      deletedOrder.areaId,
+      scheduledFor,
+    );
+
+    if (alreadyExistsForArea) {
+      throw new BadRequestException(
+        `Ya existe una orden activa para el area ${deletedOrder.areaId} en la fecha ${scheduledFor}.`,
+      );
+    }
+
+    try {
+      const restored = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.order.create({
+          data: {
+            id: deletedOrder.originalOrderId,
+            userId: deletedOrder.userId,
+            areaId: deletedOrder.areaId,
+            totalAmount: deletedOrder.totalAmount,
+            status: deletedOrder.status,
+          observation: deletedOrder.observation,
+          scheduledFor: deletedOrder.scheduledFor,
+            createdAt: deletedOrder.originalCreatedAt,
+            updatedAt: deletedOrder.originalUpdatedAt,
+            orderItems: {
+              create: deletedOrder.deletedOrderItems.map((item) => ({
+                id: item.originalItemId,
+                productId: item.productId,
+                quantity: item.quantity,
+                price: item.price,
+                unitMeasurementId: item.unitMeasurementId,
+              })),
+            },
+          },
+          include: fullOrderInclude,
+        });
+
+        await tx.deletedOrder.delete({ where: { id } });
+        return created;
+      });
+
+      return this.addPeruFields(restored);
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2003'
+      ) {
+        throw new BadRequestException(
+          'No se pudo restaurar porque falta una referencia relacionada (area, usuario, producto o unidad de medida).',
+        );
+      }
+
+      throw error;
+    }
+  }
+
+  async removeDeleted(id: number): Promise<{ message: string }> {
+    if (!id) throw new BadRequestException('El ID es obligatorio');
+
+    const deletedOrder = await this.prisma.deletedOrder.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!deletedOrder) {
+      throw new NotFoundException(`Orden eliminada con ID ${id} no encontrada`);
+    }
+
+    await this.prisma.deletedOrder.delete({ where: { id } });
+
+    return { message: `Orden eliminada con ID ${id} borrada definitivamente` };
   }
 
   // ---------------------------------------------------------------------------
@@ -430,8 +860,57 @@ export class OrdersService {
     }
 
     const peruDate = this.normalizeToPeruDate(date.trim());
-    const exists = await this.existsOrderInPeruDate(areaIdNum, peruDate);
+    const exists = await this.existsOrderForScheduledDate(areaIdNum, peruDate);
     return { exists };
+  }
+
+  async followUp(date: string, userRole?: string) {
+    if (userRole !== 'admin') {
+      throw new ForbiddenException('Solo los administradores pueden ver el seguimiento de pedidos.');
+    }
+
+    const peruDate = this.normalizeToPeruDate(date);
+    const selectedDate = new Date(`${peruDate}T00:00:00.000Z`);
+
+    const [users, ordersForDate, futureOrders] = await Promise.all([
+      this.prisma.user.findMany({
+        where: { role: 'customer' },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          phone: true,
+          areas: { include: { company: true } },
+        },
+        orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+      }),
+      this.prisma.order.findMany({
+        where: { scheduledFor: selectedDate },
+        include: fullOrderInclude,
+      }),
+      this.prisma.order.findMany({
+        where: { scheduledFor: { gt: selectedDate } },
+        include: fullOrderInclude,
+        orderBy: { scheduledFor: 'asc' },
+      }),
+    ]);
+
+    const orderByAreaId = new Map(
+      ordersForDate.map((order) => [order.areaId, this.addPeruFields(order)]),
+    );
+
+    return {
+      date: peruDate,
+      users: users.map(({ areas, ...user }) => ({
+        ...user,
+        areas: areas.map((area) => ({
+          ...area,
+          order: orderByAreaId.get(area.id) ?? null,
+        })),
+      })),
+      futureOrders: futureOrders.map((order) => this.addPeruFields(order)),
+    };
   }
 
   // ---------------------------------------------------------------------------

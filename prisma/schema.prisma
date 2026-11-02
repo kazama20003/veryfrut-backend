@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
@@ -97,6 +98,7 @@ model Order {
   totalAmount Float
   status      String // Ej: "created", "delivered", etc.
   observation String? // <- Campo agregado
+  scheduledFor DateTime @db.Date
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt      @db.Timestamptz(3)
 
@@ -121,6 +123,39 @@ model OrderItem {
 }
 
 // --- Nuevos modelos para compras/proveedores (añadir tablas nuevas) ---
+
+model DeletedOrder {
+  id                Int      @id @default(autoincrement())
+  originalOrderId   Int      @unique
+  areaId            Int
+  userId            Int?
+  totalAmount       Float
+  status            String
+  observation       String?
+  scheduledFor      DateTime @db.Date
+  originalCreatedAt DateTime @db.Timestamptz(3)
+  originalUpdatedAt DateTime @db.Timestamptz(3)
+  deletedAt         DateTime @default(now()) @db.Timestamptz(3)
+
+  deletedOrderItems DeletedOrderItem[]
+
+  @@index([areaId])
+  @@index([deletedAt])
+}
+
+model DeletedOrderItem {
+  id                Int   @id @default(autoincrement())
+  deletedOrderId    Int
+  originalItemId    Int
+  productId         Int
+  quantity          Float
+  price             Float
+  unitMeasurementId Int
+
+  deletedOrder DeletedOrder @relation(fields: [deletedOrderId], references: [id], onDelete: Cascade)
+
+  @@index([deletedOrderId])
+}
 
 model Supplier {
   id          Int      @id @default(autoincrement())
